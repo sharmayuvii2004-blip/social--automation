@@ -10,7 +10,6 @@ TIMEZONE = pytz.timezone('Asia/Kolkata')
 SHEET_NAME = 'Content_Master'
 WINDOW_SEC = 86400
 
-# Channel to secret mapping
 YT_TOKENS = {
     'billionaire': os.environ.get('YT_TOKEN_BILLIONARIE', ''),
     'ai_sales': os.environ.get('YT_TOKEN_AI_SALES', ''),
@@ -54,7 +53,7 @@ def get_pending(sheet):
     pending = []
     for i, row in enumerate(rows):
         print(f"DEBUG: Row {i+2} status={row.get('status')} schedule={row.get('schedule_datetime')}")
-        if str(row.get('status','')).strip().lower() != 'pending':
+        if str(row.get('status', '')).strip().lower() != 'pending':
             continue
         try:
             sched = datetime.strptime(
@@ -71,33 +70,38 @@ def get_pending(sheet):
 def get_yt_access_token(channel):
     refresh_token = YT_TOKENS.get(channel, '')
     if not refresh_token:
+        print(f"YT: No refresh token for channel={channel}")
         return None
-    
-    # Get client credentials from env
+
     client_id = os.environ.get('YT_CLIENT_ID', '')
     client_secret = os.environ.get('YT_CLIENT_SECRET', '')
-    
+
+    print(f"YT: Getting access token for channel={channel}")
     r = requests.post('https://oauth2.googleapis.com/token', data={
         'client_id': client_id,
         'client_secret': client_secret,
         'refresh_token': refresh_token,
         'grant_type': 'refresh_token'
     })
-    
+
     if r.status_code == 200:
+        print(f"YT: Access token received successfully")
         return r.json().get('access_token')
+
+    print(f"YT Token Error: {r.status_code} {r.text[:200]}")
     return None
 
 def post_youtube(row):
     if 'youtube' not in str(row.get('platform', '')):
         return True, 'skipped'
-    
+
     channel = row['channel'].lower()
     access_token = get_yt_access_token(channel)
-    
+
     if not access_token:
         return False, 'YT token missing'
-    
+
+    print(f"YT: Uploading video for channel={channel}")
     headers = {'Authorization': f'Bearer {access_token}'}
     meta = {
         'snippet': {
@@ -107,60 +111,43 @@ def post_youtube(row):
         },
         'status': {'privacyStatus': 'public'}
     }
-    
+
     init = requests.post(
         'https://www.googleapis.com/upload/youtube/v3/videos'
         '?uploadType=resumable&part=snippet,status',
         headers={**headers, 'Content-Type': 'application/json'},
         json=meta, timeout=30
     )
-    
+
+    print(f"YT Init response: {init.status_code}")
     if init.status_code != 200:
+        print(f"YT Init Error: {init.text[:200]}")
         return False, init.text[:200]
-    
+
     upload_url = init.headers.get('Location', '')
+    print(f"YT: Downloading video from Drive...")
     vid = requests.get(row['video_url'], stream=True, timeout=120)
+    print(f"YT: Uploading to YouTube...")
     up = requests.put(upload_url, data=vid.content,
                       headers={'Content-Type': 'video/*'}, timeout=300)
-    
-    return (True, up.json().get('id')) if up.status_code in [200, 201] \
-        else (False, up.text[:200])
+
+    print(f"YT Upload response: {up.status_code}")
+    if up.status_code in [200, 201]:
+        return True, up.json().get('id')
+    print(f"YT Upload Error: {up.text[:200]}")
+    return False, up.text[:200]
 
 def post_facebook(row):
     if 'fb' not in str(row.get('platform', '')):
         return True, 'skipped'
-    
+
     channel = row['channel'].lower()
     pid = FB_PAGE_IDS.get(channel, '')
     tok = FB_TOKENS.get(channel, '')
     
-    if not pid or not tok:
-        return False, 'FB credentials missing'
-    
-    r = requests.post(
-        f'https://graph.facebook.com/v19.0/{pid}/videos',
-        data={
-            'file_url': row['video_url'],
-            'title': row['title'],
-            'description': row['description'] + '\n' + row['hashtags'],
-            'access_token': tok
-        }, timeout=60)
-    
-    return (True, r.json().get('id')) if r.status_code == 200 \
-        else (False, r.text[:200])
-
-def post_instagram(row):
-    if 'insta' not in str(row.get('platform', '')):
-        return True, 'skipped'
-    
-    import time
-    channel = row['channel'].lower()
-    iid = IG_IDS.get(channel, '')
-    tok = IG_TOKENS.get(channel, '')
-    
     if not iid or not tok:
         return False, 'IG credentials missing'
-    
+
     r1 = requests.post(
         f'https://graph.facebook.com/v19.0/{iid}/media',
         data={
@@ -169,18 +156,18 @@ def post_instagram(row):
             'caption': row['description'] + '\n\n' + row['hashtags'],
             'access_token': tok
         }, timeout=60)
-    
+
     if r1.status_code != 200:
         return False, r1.text[:200]
-    
+
     cid = r1.json()['id']
     time.sleep(45)
-    
+
     r2 = requests.post(
         f'https://graph.facebook.com/v19.0/{iid}/media_publish',
         data={'creation_id': cid, 'access_token': tok},
         timeout=60)
-    
+
     return (True, r2.json().get('id')) if r2.status_code == 200 \
         else (False, r2.text[:200])
 
@@ -192,31 +179,39 @@ def update_row(sheet, row_num, status, posted_at='', error=''):
 def main():
     now_str = datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
     print(f'🚀 Started at {now_str} IST')
-    
+
     sheet = get_sheet()
     pending = get_pending(sheet)
-    
+
     if not pending:
         print('✅ No posts due now.')
         return
-    
+
     for row_num, post in pending:
         print(f'\n📤 Posting: {post.get("title","")} | {post.get("channel","")} | {post.get("platform","")}')
-        
+
         errors = []
         fb_ok, fb_msg = post_facebook(post)
         ig_ok, ig_msg = post_instagram(post)
         yt_ok, yt_msg = post_youtube(post)
-        
+
+        print(f"FB: ok={fb_ok} msg={fb_msg}")
+        print(f"IG: ok={ig_ok} msg={ig_msg}")
+        print(f"YT: ok={yt_ok} msg={yt_msg}")
+
         if not fb_ok: errors.append(f'FB:{fb_msg}')
         if not ig_ok: errors.append(f'IG:{ig_msg}')
         if not yt_ok: errors.append(f'YT:{yt_msg}')
-        
+
         status = 'posted' if not errors else \
                  ('failed' if len(errors) == 3 else 'partial')
-        
+
         update_row(sheet, row_num, status, now_str, ' | '.join(errors))
         print(f'{"✅" if status=="posted" else "⚠️"} {status}')
 
 if __name__ == '__main__':
     main()
+    
+
+
+    
