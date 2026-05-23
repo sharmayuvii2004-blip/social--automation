@@ -8,7 +8,7 @@ from google.oauth2.service_account import Credentials
 
 TIMEZONE = pytz.timezone('Asia/Kolkata')
 SHEET_NAME = 'Content_Master'
-WINDOW_SEC = 900
+WINDOW_SEC = 86400
 
 # Channel to secret mapping
 YT_TOKENS = {
