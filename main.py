@@ -201,7 +201,7 @@ def main():
         return
     
     for row_num, post in pending:
-        print(f'\n📤 Posting: {post["title"]} | {post["channel"]} | {post["platform"]}')
+        print(f'\n📤 Posting: {post.get("title","")} | {post.get("channel","")} | {post.get("platform","")}')
         
         errors = []
         fb_ok, fb_msg = post_facebook(post)
