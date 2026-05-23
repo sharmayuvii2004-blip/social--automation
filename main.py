@@ -49,15 +49,19 @@ def get_sheet():
 def get_pending(sheet):
     rows = sheet.get_all_records()
     now = datetime.now(TIMEZONE)
+    print(f"DEBUG: Current time = {now}")
+    print(f"DEBUG: Total rows = {len(rows)}")
     pending = []
     for i, row in enumerate(rows):
-        if str(row.get('status', '')).strip().lower() != 'pending':
+        print(f"DEBUG: Row {i+2} status={row.get('status')} schedule={row.get('schedule_datetime')}")
+        if str(row.get('status','')).strip().lower() != 'pending':
             continue
         try:
             sched = datetime.strptime(
                 str(row['schedule_datetime']), '%Y-%m-%d %H:%M:%S'
             ).replace(tzinfo=TIMEZONE)
             diff = (now - sched).total_seconds()
+            print(f"DEBUG: Row {i+2} diff={diff} seconds")
             if 0 <= diff <= WINDOW_SEC:
                 pending.append((i + 2, row))
         except Exception as e:
