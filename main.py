@@ -180,7 +180,8 @@ def post_youtube(row):
 
     if up.status_code in [200, 201]:
         print("✅ Upload Success")
-        return True, response_json.get('id', 'uploaded')
+        return True,
+    response_json.get('id', 'uploaded')
 
     print("❌ Upload Failed:", up.status_code)
     print(up.text[:500])
