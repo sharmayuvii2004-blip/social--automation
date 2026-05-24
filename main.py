@@ -93,8 +93,12 @@ def get_yt_access_token(channel):
     return None
 
 def post_youtube(row):
-    if 'youtube' not in str(row.get('platform', '')):
+
+    if 'youtube' not in str(row.get('platform', '')).lower():
         return True, 'skipped'
+
+    import mimetypes
+    import re
 
     channel = row['channel'].lower()
     access_token = get_yt_access_token(channel)
@@ -102,8 +106,8 @@ def post_youtube(row):
     if not access_token:
         return False, 'YT token missing'
 
-    print(f"YT: Uploading video for channel={channel}")
     headers = {'Authorization': f'Bearer {access_token}'}
+
     meta = {
         'snippet': {
             'title': row['title'],
@@ -114,82 +118,74 @@ def post_youtube(row):
     }
 
     init = requests.post(
-        'https://www.googleapis.com/upload/youtube/v3/videos'
-        '?uploadType=resumable&part=snippet,status',
+        'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
         headers={**headers, 'Content-Type': 'application/json'},
-        json=meta, timeout=30
+        json=meta,
+        timeout=30
     )
 
-    print(f"YT Init response: {init.status_code}")
     if init.status_code != 200:
-        print(f"YT Init Error: {init.text[:200]}")
+        print("YT Init Error:", init.text)
         return False, init.text[:200]
 
     upload_url = init.headers.get('Location', '')
-    print(f"YT: Downloading video from Drive...")
-    import mimetypes
-import re
 
-print("YT: Preparing Drive link...")
+    video_url = row['video_url']
 
-video_url = row['video_url']
+    # Convert Google Drive VIEW link to direct download
+    if "drive.google.com/file/d/" in video_url:
+        file_id = re.search(r'/d/([^/]+)', video_url).group(1)
+        video_url = f"https://drive.google.com/uc?export=download&id={file_id}"
 
-# Auto convert Google Drive VIEW link → direct download
-if "drive.google.com/file/d/" in video_url:
-    file_id = re.search(r'/d/([^/]+)', video_url).group(1)
-    video_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    print("YT Final URL:", video_url)
 
-print("YT Final URL:", video_url)
+    vid = requests.get(
+        video_url,
+        stream=True,
+        timeout=300,
+        allow_redirects=True
+    )
 
-vid = requests.get(video_url, stream=True, timeout=300, allow_redirects=True)
+    content_type = vid.headers.get('Content-Type', '').lower()
 
-content_type = vid.headers.get('Content-Type', '').lower()
+    print("Drive Content-Type:", content_type)
+    print("File Size:", len(vid.content))
 
-print("Drive Content-Type:", content_type)
-print("File Size:", len(vid.content))
+    if 'text/html' in content_type:
+        return False, 'Drive returned HTML page instead of media file'
 
-# HTML error detect
-if 'text/html' in content_type:
-    print("❌ Drive returned HTML instead of file")
-    print(vid.text[:300])
-    return False, 'Drive returned HTML page instead of media file'
+    mime_type, _ = mimetypes.guess_type(video_url)
 
-# Detect mime type automatically
-mime_type, _ = mimetypes.guess_type(video_url)
+    if not mime_type:
+        mime_type = content_type if content_type else 'video/mp4'
 
-if not mime_type:
-    mime_type = content_type if content_type else 'application/octet-stream'
+    video_data = vid.content
 
-video_data = vid.content
+    upload_headers = {
+        'Content-Type': mime_type,
+        'Content-Length': str(len(video_data))
+    }
 
-upload_headers = {
-    'Content-Type': mime_type,
-    'Content-Length': str(len(video_data))
-}
+    up = requests.put(
+        upload_url,
+        data=video_data,
+        headers=upload_headers,
+        timeout=900
+    )
 
-print("Upload MIME:", mime_type)
+    try:
+        response_json = up.json()
+    except:
+        response_json = {}
 
-up = requests.put(
-    upload_url,
-    data=video_data,
-    headers=upload_headers,
-    timeout=900
-)
+    if up.status_code in [200, 201]:
+        print("✅ Upload Success")
+        return True, response_json.get('id', 'uploaded')
 
-try:
-    response_json = up.json()
-except:
-    response_json = {}
+    print("❌ Upload Failed:", up.status_code)
+    print(up.text[:500])
 
-if up.status_code in [200, 201]:
-    print("✅ Upload Success")
-    return True, response_json.get('id', 'uploaded')
-
-print("❌ Upload Failed:", up.status_code)
-print(up.text[:500])
-
-return False, up.text[:500]
-
+    return False, up.text[:500]
 def post_facebook(row):
     if 'fb' not in str(row.get('platform', '')):
         return True, 'skipped'
