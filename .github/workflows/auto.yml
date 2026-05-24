@@ -30,4 +30,3 @@ jobs:
           YT_TOKEN_AI_SALES: ${{ secrets.YT_TOKEN_AI_SALES }}
         run: python main.py
         
-&
