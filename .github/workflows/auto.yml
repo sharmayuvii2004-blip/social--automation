@@ -28,8 +28,6 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_TOKEN_BILLIONAIRE: ${{ secrets.YT_TOKEN_BILLIONAIRE }}
           YT_TOKEN_AI_SALES: ${{ secrets.YT_TOKEN_AI_SALES }}
-          # Baaki social media agar setup nahi hain toh abhi khali chhod sakte hain
-          FB_PAGE_ID_BILLIONAIRE: ${{ secrets.FB_PAGE_ID_BILLIONAIRE }}
-          FB_TOKEN_BILLIONAIRE: ${{ secrets.FB_TOKEN_BILLIONAIRE }}
         run: python main.py
         
+&
