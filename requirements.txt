@@ -3,3 +3,4 @@ google-auth==2.23.4
 requests==2.31.0
 pytz==2023.3
 google-api-python-client==2.108.0
+gdown==5.2.0
