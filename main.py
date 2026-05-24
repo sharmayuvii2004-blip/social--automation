@@ -82,18 +82,29 @@ def get_yt_access_token(channel):
     return None
 
 def post_youtube(row):
-    # 1. Platform Check
-    platform_val = str(row.get('platform', '')).lower()
-    if 'youtube' not in platform_val and 'yt' not in platform_val:
+    # --- IS BLOCK KO DHYAN SE REPLACE KAREIN ---
+    # Sabhi columns ke naam ko lowercase aur clean karke map banate hain
+    clean_row = {str(k).lower().strip(): v for k, v in row.items()}
+    
+    # Platform aur Channel ka data nikalte hain
+    p_val = str(clean_row.get('platform', '')).lower().strip()
+    channel = str(clean_row.get('channel', '')).lower().strip()
+    
+    print(f"DEBUG: Platform Found -> '{p_val}'")
+    print(f"DEBUG: Channel Found -> '{channel}'")
+
+    # Agar 'youtube' word kahin bhi hai, toh skip mat karo
+    if 'youtube' not in p_val and 'yt' not in p_val:
         return True, 'skipped'
+    # --- BLOCK END ---
 
-    print(f"🎥 Processing YouTube for: {row.get('title')}")
-
-    # 2. Token Check
-    channel = str(row.get('channel', '')).lower().strip()
+    import mimetypes
+    import re
+    
+    # Access token lene ka process
     access_token = get_yt_access_token(channel)
     if not access_token:
-        return False, 'Auth token failed'
+        return False, 'YT token missing'
 
     # 3. Video URL & Download
     video_url = row.get('video_url', '')
