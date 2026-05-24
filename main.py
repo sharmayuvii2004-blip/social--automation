@@ -93,9 +93,11 @@ def get_yt_access_token(channel):
     return None
 
 def post_youtube(row):
-
-    if 'youtube' not in str(row.get('platform', '')).lower():
+    # Line 97 ko hata kar ye 2 lines likhein:
+    platform_val = str(row.get('platform', '')).lower()
+    if 'youtube' not in platform_val:
         return True, 'skipped'
+
 
     import mimetypes
     import re
@@ -131,12 +133,16 @@ def post_youtube(row):
     upload_url = init.headers.get('Location', '')
 
     video_url = row['video_url']
-
-    # Convert Google Drive VIEW link to direct download
-    if "drive.google.com/file/d/" in video_url:
-        file_id = re.search(r'/d/([^/]+)', video_url).group(1)
+        # Line 136 se 139 tak ko isse replace karein:
+    if "drive.google.com" in video_url:
+        import re
+        if "/d/" in video_url:
+            file_id = video_url.split('/d/')[1].split('/')[0]
+        elif "id=" in video_url:
+            file_id = video_url.split('id=')[1].split('&')[0]
         video_url = f"https://drive.google.com/uc?export=download&id={file_id}"
 
+        
     print("YT Final URL:", video_url)
 
     vid = requests.get(
