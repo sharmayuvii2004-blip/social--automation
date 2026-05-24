@@ -2,8 +2,8 @@ name: Social Automation
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
-  workflow_dispatch:
+    - cron: '*/15 * * * *' # Har 15 minute mein chalega
+  workflow_dispatch: # Manual run karne ke liye
 
 jobs:
   automation:
@@ -24,14 +24,12 @@ jobs:
       - name: Run Script
         env:
           GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_TOKEN_BILLIONAIRE: ${{ secrets.YT_TOKEN_BILLIONAIRE }}
+          YT_TOKEN_AI_SALES: ${{ secrets.YT_TOKEN_AI_SALES }}
+          # Baaki social media agar setup nahi hain toh abhi khali chhod sakte hain
           FB_PAGE_ID_BILLIONAIRE: ${{ secrets.FB_PAGE_ID_BILLIONAIRE }}
           FB_TOKEN_BILLIONAIRE: ${{ secrets.FB_TOKEN_BILLIONAIRE }}
-          FB_PAGE_ID_PERSONAL: ${{ secrets.FB_PAGE_ID_PERSONAL }}
-          FB_TOKEN_PERSONAL: ${{ secrets.FB_TOKEN_PERSONAL }}
-          IG_ID_BILLIONAIRE: ${{ secrets.IG_ID_BILLIONAIRE }}
-          IG_TOKEN_BILLIONAIRE: ${{ secrets.IG_TOKEN_BILLIONAIRE }}
-          IG_ID_PERSONAL: ${{ secrets.IG_ID_PERSONAL }}
-          IG_TOKEN_PERSONAL: ${{ secrets.IG_TOKEN_PERSONAL }}
-          YT_TOKEN_BILLIONAIRE: ${{ secrets.YT_TOKEN_BILLIONAIRE }}
-          YT_TOKEN_PERSONAL: ${{ secrets.YT_TOKEN_PERSONAL }}
         run: python main.py
+        
