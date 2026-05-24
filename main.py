@@ -225,6 +225,7 @@ def update_row(sheet, row_num, status, posted_at='', error=''):
     sheet.update_cell(row_num, 11, posted_at)
     sheet.update_cell(row_num, 12, error[:200] if error else '')
 
+# main function ko aise badlein:
 def main():
     now_str = datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
     print(f'🚀 Started at {now_str} IST')
@@ -237,26 +238,26 @@ def main():
         return
 
     for row_num, post in pending:
-        print(f'\n📤 Posting: {post.get("title","")} | {post.get("channel","")} | {post.get("platform","")}')
+        print(f'\n📤 Posting: {post.get("title","")} | {post.get("channel","")}')
 
-        errors = []
-        fb_ok, fb_msg = post_facebook(post)
-        ig_ok, ig_msg = post_instagram(post)
+        # Abhi sirf YouTube run hoga
         yt_ok, yt_msg = post_youtube(post)
-
-        print(f"FB: ok={fb_ok} msg={fb_msg}")
-        print(f"IG: ok={ig_ok} msg={ig_msg}")
         print(f"YT: ok={yt_ok} msg={yt_msg}")
 
-        if not fb_ok: errors.append(f'FB:{fb_msg}')
-        if not ig_ok: errors.append(f'IG:{ig_msg}')
-        if not yt_ok: errors.append(f'YT:{yt_msg}')
+        if yt_ok and yt_msg != 'skipped':
+            status = 'posted'
+            error_msg = ''
+        elif yt_msg == 'skipped':
+            continue # Agar platform YouTube nahi hai toh skip karein
+        else:
+            status = 'failed'
+            error_msg = f'YT:{yt_msg}'
 
-        status = 'posted' if not errors else \
-                 ('failed' if len(errors) == 3 else 'partial')
+        update_row(sheet, row_num, status, now_str, error_msg)
+        print(f'{"✅" if status=="posted" else "❌"} {status}')
+        
 
-        update_row(sheet, row_num, status, now_str, ' | '.join(errors))
-        print(f'{"✅" if status=="posted" else "⚠️"} {status}')
+    
 
 if __name__ == '__main__':
     main()
