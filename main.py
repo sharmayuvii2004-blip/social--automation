@@ -3,6 +3,7 @@ import json
 import gspread
 import requests
 import pytz
+import mimetypes
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 
@@ -126,16 +127,52 @@ def post_youtube(row):
 
     upload_url = init.headers.get('Location', '')
     print(f"YT: Downloading video from Drive...")
-    vid = requests.get(row['video_url'], stream=True, timeout=120)
-    print(f"YT: Uploading to YouTube...")
-    up = requests.put(upload_url, data=vid.content,
-                      headers={'Content-Type': 'video/*'}, timeout=300)
+    vid = requests.get(row['video_url'], stream=True, timeout=300)
 
-    print(f"YT Upload response: {up.status_code}")
-    if up.status_code in [200, 201]:
-        return True, up.json().get('id')
-    print(f"YT Upload Error: {up.text[:200]}")
-    return False, up.text[:200]
+content_type = vid.headers.get('Content-Type', '').lower()
+
+print("📦 Drive Content-Type:", content_type)
+print("📦 File Size:", len(vid.content))
+
+# Detect HTML error pages
+if 'text/html' in content_type:
+    return False, 'Drive returned HTML page instead of media file'
+
+# Detect file type automatically
+mime_type, _ = mimetypes.guess_type(row['video_url'])
+
+if not mime_type:
+    mime_type = content_type if content_type else 'application/octet-stream'
+
+video_data = vid.content
+
+upload_headers = {
+    'Content-Type': mime_type,
+    'Content-Length': str(len(video_data))
+}
+
+print("🚀 Upload MIME:", mime_type)
+
+up = requests.put(
+    upload_url,
+    data=video_data,
+    headers=upload_headers,
+    timeout=900
+)
+
+try:
+    response_json = up.json()
+except:
+    response_json = {}
+
+if up.status_code in [200, 201]:
+    print("✅ Upload Success")
+    return True, response_json.get('id', 'uploaded')
+
+print("❌ Upload Failed:", up.status_code)
+print(up.text[:500])
+
+return False, up.text[:500]
 
 def post_facebook(row):
     if 'fb' not in str(row.get('platform', '')):
