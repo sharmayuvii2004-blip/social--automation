@@ -127,19 +127,35 @@ def post_youtube(row):
 
     upload_url = init.headers.get('Location', '')
     print(f"YT: Downloading video from Drive...")
-    vid = requests.get(row['video_url'], stream=True, timeout=300)
+    import mimetypes
+import re
+
+print("YT: Preparing Drive link...")
+
+video_url = row['video_url']
+
+# Auto convert Google Drive VIEW link → direct download
+if "drive.google.com/file/d/" in video_url:
+    file_id = re.search(r'/d/([^/]+)', video_url).group(1)
+    video_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+
+print("YT Final URL:", video_url)
+
+vid = requests.get(video_url, stream=True, timeout=300, allow_redirects=True)
 
 content_type = vid.headers.get('Content-Type', '').lower()
 
-print("📦 Drive Content-Type:", content_type)
-print("📦 File Size:", len(vid.content))
+print("Drive Content-Type:", content_type)
+print("File Size:", len(vid.content))
 
-# Detect HTML error pages
+# HTML error detect
 if 'text/html' in content_type:
+    print("❌ Drive returned HTML instead of file")
+    print(vid.text[:300])
     return False, 'Drive returned HTML page instead of media file'
 
-# Detect file type automatically
-mime_type, _ = mimetypes.guess_type(row['video_url'])
+# Detect mime type automatically
+mime_type, _ = mimetypes.guess_type(video_url)
 
 if not mime_type:
     mime_type = content_type if content_type else 'application/octet-stream'
@@ -151,7 +167,7 @@ upload_headers = {
     'Content-Length': str(len(video_data))
 }
 
-print("🚀 Upload MIME:", mime_type)
+print("Upload MIME:", mime_type)
 
 up = requests.put(
     upload_url,
