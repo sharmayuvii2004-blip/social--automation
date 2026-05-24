@@ -15,7 +15,7 @@ SHEET_NAME = 'Content_Master'
 WINDOW_SEC = 86400  # 24 hours window
 
 YT_TOKENS = {
-    'billionaire': os.environ.get('YT_TOKEN_BILLIONARIE', ''),
+    'billionaire': os.environ.get('YT_TOKEN_BILLIONAIRE', ''),
     'ai_sales': os.environ.get('YT_TOKEN_AI_SALES', ''),
 }
 
