@@ -3,6 +3,7 @@ import requests
 import json
 import time
 import gspread
+from datetime import datetime
 
 # ==========================================
 # 1. ENVIRONMENT VARIABLES & CREDENTIALS
@@ -10,7 +11,7 @@ import gspread
 FB_USER_TOKEN = os.environ.get('FB_USER_TOKEN')
 YT_CLIENT_ID = os.environ.get('YT_CLIENT_ID')
 YT_CLIENT_SECRET = os.environ.get('YT_CLIENT_SECRET')
-GOOGLE_CREDS_JSON = os.environ.get('GOOGLE_CREDS') # Google Sheet Credentials
+GOOGLE_CREDS_JSON = os.environ.get('GOOGLE_CREDS')
 
 # ==========================================
 # 2. INSTAGRAM AUTOMATION LOGIC
@@ -19,7 +20,6 @@ def post_instagram_reel(instagram_business_id, video_url, caption):
     if not instagram_business_id or not FB_USER_TOKEN:
         return False, "IG Credentials Missing"
     try:
-        print(f"DEBUG IG: Creating container for ID: {instagram_business_id}")
         container_url = f"https://graph.facebook.com/v25.0/{instagram_business_id}/media"
         container_res = requests.post(container_url, data={
             'media_type': 'REELS',
@@ -29,11 +29,10 @@ def post_instagram_reel(instagram_business_id, video_url, caption):
         }).json()
         
         if 'id' not in container_res:
-            return False, f"IG Container Error: {container_res}"
+            return False, f"IG Container Error: {container_res.get('error', container_res)}"
             
         container_id = container_res['id']
-        print("DEBUG IG: Waiting 30 seconds for Instagram processing...")
-        time.sleep(30)
+        time.sleep(30) # Wait for IG processing
         
         publish_url = f"https://graph.facebook.com/v25.0/{instagram_business_id}/media_publish"
         publish_res = requests.post(publish_url, data={
@@ -43,7 +42,7 @@ def post_instagram_reel(instagram_business_id, video_url, caption):
         
         if 'id' in publish_res:
             return True, publish_res['id']
-        return False, f"IG Publish Error: {publish_res}"
+        return False, f"IG Publish Error: {publish_res.get('error', publish_res)}"
     except Exception as e:
         return False, f"IG Exception: {e}"
 
@@ -54,7 +53,6 @@ def post_facebook_reel(page_id, video_url, caption):
     if not page_id or not FB_USER_TOKEN:
         return False, "FB Credentials Missing"
     try:
-        print(f"DEBUG FB: Fetching Page Access Token for Page ID: {page_id}")
         accounts_url = f"https://graph.facebook.com/v25.0/me/accounts?access_token={FB_USER_TOKEN}"
         accounts_res = requests.get(accounts_url).json()
         
@@ -63,27 +61,22 @@ def post_facebook_reel(page_id, video_url, caption):
             for page in accounts_res['data']:
                 if str(page['id']) == str(page_id):
                     page_access_token = page['access_token']
-                    print("DEBUG FB: Page Access Token fetched successfully!")
                     break
         
         token_to_use = page_access_token if page_access_token else FB_USER_TOKEN
-        
         video_binary = requests.get(video_url).content
         
-        print("DEBUG FB: Initializing Reel Upload...")
         init_url = f"https://graph.facebook.com/v25.0/{page_id}/video_reels"
         init_res = requests.post(init_url, data={'upload_phase': 'START', 'access_token': token_to_use}).json()
         
         if 'video_id' not in init_res:
-            return False, f"FB Init Error: {init_res}"
+            return False, f"FB Init Error: {init_res.get('error', init_res)}"
             
         video_id = init_res['video_id']
         upload_url = init_res['upload_url']
         
-        print(f"DEBUG FB: Uploading video binary...")
         requests.post(upload_url, headers={'Authorization': f'OAuth {token_to_use}'}, data=video_binary)
         
-        print("DEBUG FB: Finalizing Publication...")
         publish_res = requests.post(init_url, data={
             'upload_phase': 'FINISH',
             'video_id': video_id,
@@ -94,22 +87,20 @@ def post_facebook_reel(page_id, video_url, caption):
         
         if publish_res.get('success') or 'id' in publish_res:
             return True, publish_res.get('id', 'fb_success')
-        return False, f"FB Finish Error: {publish_res}"
+        return False, f"FB Finish Error: {publish_res.get('error', publish_res)}"
     except Exception as e:
         return False, f"FB Exception: {e}"
 
 # ==========================================
-# 4. YOUTUBE AUTOMATION LOGIC
+# 4. YOUTUBE AUTOMATION LOGIC (RESTORED)
 # ==========================================
 def get_youtube_refresh_token(channel_name):
     clean_name = str(channel_name).strip().lower()
     if 'billionaire' in clean_name:
-        token = os.environ.get('YT_TOKEN_BILLIONAIRE')
+        return os.environ.get('YT_TOKEN_BILLIONAIRE')
     elif 'sales' in clean_name or 'ai_sales' in clean_name:
-        token = os.environ.get('YT_TOKEN_AI_SALES')
-    else:
-        token = os.environ.get('YT_TOKEN_BILLIONAIRE') or os.environ.get('YT_TOKEN_AI_SALES')
-    return token
+        return os.environ.get('YT_TOKEN_AI_SALES')
+    return os.environ.get('YT_TOKEN_BILLIONAIRE') or os.environ.get('YT_TOKEN_AI_SALES')
 
 def refresh_youtube_access_token(refresh_token):
     if not refresh_token or not YT_CLIENT_ID or not YT_CLIENT_SECRET:
@@ -124,7 +115,6 @@ def refresh_youtube_access_token(refresh_token):
         }).json()
         return res.get("access_token")
     except Exception as e:
-        print(f"DEBUG YT Refresh Exception: {e}")
         return None
 
 def post_youtube_shorts(refresh_token, video_url, title, description=""):
@@ -132,9 +122,7 @@ def post_youtube_shorts(refresh_token, video_url, title, description=""):
     if not access_token:
         return False, "YT Access Token Refresh Failed"
     try:
-        print("DEBUG YT: Downloading asset for YouTube upload...")
         video_binary = requests.get(video_url).content
-        
         url = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=multipart&part=snippet,status"
         headers = {"Authorization": f"Bearer {access_token}"}
         
@@ -151,16 +139,15 @@ def post_youtube_shorts(refresh_token, video_url, title, description=""):
         res = requests.post(url, headers=headers, files=files).json()
         if 'id' in res:
             return True, res['id']
-        return False, f"YT Upload Error: {res}"
+        return False, f"YT Upload Error: {res.get('error', res)}"
     except Exception as e:
         return False, f"YT Exception: {e}"
 
 # ==========================================
-# 5. GOOGLE SHEET CONNECTOR (FIXED WITHOUT OAUTH2CLIENT)
+# 5. GOOGLE SHEET CONNECTOR
 # ==========================================
 def get_sheet():
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    # Direct service account connection from modern gspread
     client = gspread.service_account_from_dict(creds_dict)
     return client.open("Content_Master").sheet1
 
@@ -172,7 +159,6 @@ def main():
     try:
         sheet = get_sheet()
         rows = sheet.get_all_records()
-        print(f"DEBUG: Total rows found in sheet = {len(rows)}")
     except Exception as e:
         print(f"ERROR: Google Sheet connectivity failed: {e}")
         return
@@ -183,7 +169,6 @@ def main():
             continue
             
         print(f"DEBUG: Processing row {idx}...")
-        
         channel_name = str(row.get('channel', '')).strip().lower()
         video_url = row.get('video_url', '')
         caption = row.get('caption', '')
@@ -202,33 +187,54 @@ def main():
         # EXECUTE INSTAGRAM
         if 'instagram' in platforms_to_post:
             ig_ok, ig_res = post_instagram_reel(ig_business_id, video_url, caption)
-            results['instagram'] = "True" if ig_ok else "False"
-            if not ig_ok: errors.append(f"IG: {ig_res}")
+            if ig_ok:
+                results['instagram'] = "Success"
+            else:
+                results['instagram'] = "Failed"
+                errors.append(f"IG Error: {ig_res}")
 
         # EXECUTE FACEBOOK
         if 'facebook' in platforms_to_post:
             fb_ok, fb_res = post_facebook_reel(fb_page_id, video_url, caption)
-            results['facebook'] = "True" if fb_ok else "False"
-            if not fb_ok: errors.append(f"FB: {fb_res}")
+            if fb_ok:
+                results['facebook'] = "Success"
+            else:
+                results['facebook'] = "Failed"
+                errors.append(f"FB Error: {fb_res}")
 
         # EXECUTE YOUTUBE
         if 'youtube' in platforms_to_post:
             yt_token = get_youtube_refresh_token(channel_name)
             yt_ok, yt_res = post_youtube_shorts(yt_token, video_url, caption, caption)
-            results['youtube'] = "True" if yt_ok else "False"
-            if not yt_ok: errors.append(f"YT: {yt_res}")
+            if yt_ok:
+                results['youtube'] = "Success"
+            else:
+                results['youtube'] = "Failed"
+                errors.append(f"YT Error: {yt_res}")
 
-        # Compile results
-        status_str = " | ".join([f"{k}:{v}" for k, v in results.items()])
+        # Strict Status and Logging Updates to Sheet
+        status_col_idx = list(row.keys()).index('status') + 1
+        posted_at_col_idx = list(row.keys()).index('posted_at') + 1
+        
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         if errors:
-            status_str += f" (Errors: {', '.join(errors)})"
-            sheet.update_cell(idx, list(row.keys()).index('status') + 1, 'failed')
+            # Agar ek bhi platform fail hua toh sheet me direct 'failed' mark hoga aur log jayega
+            sheet.update_cell(idx, status_col_idx, 'failed')
+            error_msg = " | ".join(errors)
+            # Row mapping check to update error log dynamically
+            if 'error_log' in row:
+                error_log_idx = list(row.keys()).index('error_log') + 1
+                sheet.update_cell(idx, error_log_idx, error_msg)
+            print(f"ROW {idx} FAILED: {error_msg}")
         else:
-            sheet.update_cell(idx, list(row.keys()).index('status') + 1, 'success')
-            
-        if 'log' in row:
-            sheet.update_cell(idx, list(row.keys()).index('log') + 1, status_str)
-        print(f"ROW {idx} RESULT: {status_str}")
+            # Jab tak saare platforms confirm successful nahi hote, tab tak posted nahi hoga
+            sheet.update_cell(idx, status_col_idx, 'posted')
+            sheet.update_cell(idx, posted_at_col_idx, current_time)
+            if 'error_log' in row:
+                error_log_idx = list(row.keys()).index('error_log') + 1
+                sheet.update_cell(idx, error_log_idx, "All Platforms Uploaded Successfully")
+            print(f"ROW {idx} SUCCESSFUL!")
 
 if __name__ == "__main__":
     main()
