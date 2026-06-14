@@ -16,7 +16,7 @@ GOOGLE_CREDS_JSON = os.environ.get('GOOGLE_CREDS')
 # ==========================================
 def post_instagram_reel(instagram_business_id, video_url, caption):
     if not instagram_business_id or not FB_USER_TOKEN:
-        return False, "IG_Auth_Missing"
+        return False, "IG_Credentials_Missing"
     try:
         container_url = f"https://graph.facebook.com/v25.0/{instagram_business_id}/media"
         res = requests.post(container_url, data={
@@ -27,10 +27,10 @@ def post_instagram_reel(instagram_business_id, video_url, caption):
         }).json()
         
         if 'id' not in res:
-            return False, f"IG_Container_Failed: {json.dumps(res.get('error', res))}"
+            return False, f"IG_Container_Error: {res.get('error', {}).get('message', json.dumps(res))}"
             
         container_id = res['id']
-        time.sleep(50) # Strict policy processing wait
+        time.sleep(30)
         
         publish_url = f"https://graph.facebook.com/v25.0/{instagram_business_id}/media_publish"
         pub_res = requests.post(publish_url, data={
@@ -39,8 +39,8 @@ def post_instagram_reel(instagram_business_id, video_url, caption):
         }).json()
         
         if 'id' in pub_res:
-            return True, f"IG_ID_{pub_res['id']}"
-        return False, f"IG_Publish_Rejected: {json.dumps(pub_res.get('error', pub_res))}"
+            return True, f"IG_Live_ID_{pub_res['id']}"
+        return False, f"IG_Publish_Error: {pub_res.get('error', {}).get('message', json.dumps(pub_res))}"
     except Exception as e:
         return False, f"IG_Exception: {str(e)}"
 
@@ -49,7 +49,7 @@ def post_instagram_reel(instagram_business_id, video_url, caption):
 # ==========================================
 def post_facebook_reel(page_id, video_url, caption):
     if not page_id or not FB_USER_TOKEN:
-        return False, "FB_Auth_Missing"
+        return False, "FB_Credentials_Missing"
     try:
         accounts_url = f"https://graph.facebook.com/v25.0/me/accounts?access_token={FB_USER_TOKEN}"
         acc_res = requests.get(accounts_url).json()
@@ -68,13 +68,13 @@ def post_facebook_reel(page_id, video_url, caption):
         init_res = requests.post(init_url, data={'upload_phase': 'START', 'access_token': token_to_use}).json()
         
         if 'video_id' not in init_res:
-            return False, f"FB_Init_Failed: {json.dumps(init_res.get('error', init_res))}"
+            return False, f"FB_Init_Error: {init_res.get('error', {}).get('message', json.dumps(init_res))}"
             
         video_id = init_res['video_id']
         upload_url = init_res['upload_url']
         
         requests.post(upload_url, headers={'Authorization': f'OAuth {token_to_use}'}, data=video_binary)
-        time.sleep(20)
+        time.sleep(15)
         
         pub_res = requests.post(init_url, data={
             'upload_phase': 'FINISH',
@@ -85,13 +85,13 @@ def post_facebook_reel(page_id, video_url, caption):
         }).json()
         
         if pub_res.get('success') or 'id' in pub_res:
-            return True, f"FB_ID_{pub_res.get('id', 'Live')}"
-        return False, f"FB_Publish_Rejected: {json.dumps(pub_res.get('error', pub_res))}"
+            return True, f"FB_Live_ID_{pub_res.get('id', 'Confirmed')}"
+        return False, f"FB_Publish_Error: {pub_res.get('error', {}).get('message', json.dumps(pub_res))}"
     except Exception as e:
         return False, f"FB_Exception: {str(e)}"
 
 # ==========================================
-# 3. YOUTUBE MECHANICS (OLD TRUSTED CODES RESTORED)
+# 3. YOUTUBE MECHANICS
 # ==========================================
 def get_youtube_refresh_token(channel_name):
     clean_name = str(channel_name).strip().lower()
@@ -116,7 +116,7 @@ def refresh_youtube_access_token(refresh_token):
 def post_youtube_shorts(refresh_token, video_url, title):
     access_token = refresh_youtube_access_token(refresh_token)
     if not access_token:
-        return False, "YT_Token_Expired_Or_Invalid"
+        return False, "YT_Access_Token_Refresh_Failed"
     try:
         video_binary = requests.get(video_url).content
         url = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=multipart&part=snippet,status"
@@ -125,7 +125,7 @@ def post_youtube_shorts(refresh_token, video_url, title):
         metadata = {
             "snippet": {
                 "title": title[:100],
-                "description": "#shorts",
+                "description": "#shorts #automation",
                 "categoryId": "22"
             },
             "status": {
@@ -141,13 +141,13 @@ def post_youtube_shorts(refresh_token, video_url, title):
         
         res = requests.post(url, headers=headers, files=files).json()
         if 'id' in res:
-            return True, f"YT_ID_{res['id']}"
-        return False, f"YT_API_Rejected: {json.dumps(res.get('error', res))}"
+            return True, f"YT_Live_ID_{res['id']}"
+        return False, f"YT_API_Error: {res.get('error', {}).get('message', json.dumps(res))}"
     except Exception as e:
         return False, f"YT_Exception: {str(e)}"
 
 # ==========================================
-# 4. MASTER PROCESSOR
+# 4. RUNTIME SYSTEM
 # ==========================================
 def main():
     try:
@@ -171,46 +171,40 @@ def main():
         fb_page_id = os.environ.get('FB_PAGE_ID_BILLIONAIRE') if 'billionaire' in channel_name else os.environ.get('FB_PAGE_ID_AI_SALES')
         ig_business_id = os.environ.get('IG_BUSINESS_ID_BILLIONAIRE') if 'billionaire' in channel_name else os.environ.get('IG_BUSINESS_ID_AI_SALES')
 
-        platform_errors = []
-        success_logs = []
+        status_logs = []
+        has_failed = False
 
-        # Exact Validation Pipeline
+        # Independent Execution Loop
         if 'instagram' in platforms:
             ok, res = post_instagram_reel(ig_business_id, video_url, caption)
-            if ok: success_logs.append(res)
-            else: platform_errors.append(res)
+            status_logs.append(res)
+            if not ok: has_failed = True
 
         if 'facebook' in platforms:
             ok, res = post_facebook_reel(fb_page_id, video_url, caption)
-            if ok: success_logs.append(res)
-            else: platform_errors.append(res)
+            status_logs.append(res)
+            if not ok: has_failed = True
 
         if 'youtube' in platforms:
             token = get_youtube_refresh_token(channel_name)
             ok, res = post_youtube_shorts(token, video_url, caption)
-            if ok: success_logs.append(res)
-            else: platform_errors.append(res)
+            status_logs.append(res)
+            if not ok: has_failed = True
 
-        # Indexing Sheets
         status_col = list(row.keys()).index('status') + 1
         posted_at_col = list(row.keys()).index('posted_at') + 1
         error_log_col = list(row.keys()).index('error_log') + 1
 
-        # Fix: Force Indian Standard Time (IST)
         ist_time = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+        log_message = " | ".join(status_logs)
 
-        if platform_errors:
+        if has_failed:
             sheet.update_cell(idx, status_col, 'failed')
-            sheet.update_cell(idx, error_log_col, f"Errors: {' | '.join(platform_errors)}")
+            sheet.update_cell(idx, error_log_col, f"Partial Failure: {log_message}")
         else:
-            # Only updates if everything actually succeeded
-            if len(success_logs) == len(platforms):
-                sheet.update_cell(idx, status_col, 'posted')
-                sheet.update_cell(idx, posted_at_col, ist_time)
-                sheet.update_cell(idx, error_log_col, f"All Live: {' , '.join(success_logs)}")
-            else:
-                sheet.update_cell(idx, status_col, 'failed')
-                sheet.update_cell(idx, error_log_col, "Error: Execution responses mismatches.")
+            sheet.update_cell(idx, status_col, 'posted')
+            sheet.update_cell(idx, posted_at_col, ist_time)
+            sheet.update_cell(idx, error_log_col, f"All Success: {log_message}")
 
 if __name__ == "__main__":
     main()
