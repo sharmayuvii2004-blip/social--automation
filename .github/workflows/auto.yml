@@ -28,5 +28,8 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_TOKEN_BILLIONAIRE: ${{ secrets.YT_TOKEN_BILLIONAIRE }}
           YT_TOKEN_AI_SALES: ${{ secrets.YT_TOKEN_AI_SALES }}
+          FB_USER_TOKEN: ${{ secrets.FB_USER_TOKEN }}
+          FB_PAGE_ID_BILLIONAIRE: ${{ secrets.FB_PAGE_ID_BILLIONAIRE }}
+          FB_PAGE_ID_AI_SALES: ${{ secrets.FB_PAGE_ID_AI_SALES }}
         run: python main.py
         
