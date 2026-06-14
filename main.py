@@ -3,7 +3,6 @@ import requests
 import json
 import time
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 
 # ==========================================
 # 1. ENVIRONMENT VARIABLES & CREDENTIALS
@@ -69,7 +68,6 @@ def post_facebook_reel(page_id, video_url, caption):
         
         token_to_use = page_access_token if page_access_token else FB_USER_TOKEN
         
-        # Binary download for FB Upload API
         video_binary = requests.get(video_url).content
         
         print("DEBUG FB: Initializing Reel Upload...")
@@ -137,7 +135,6 @@ def post_youtube_shorts(refresh_token, video_url, title, description=""):
         print("DEBUG YT: Downloading asset for YouTube upload...")
         video_binary = requests.get(video_url).content
         
-        # Multipart Upload initialization
         url = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=multipart&part=snippet,status"
         headers = {"Authorization": f"Bearer {access_token}"}
         
@@ -159,13 +156,12 @@ def post_youtube_shorts(refresh_token, video_url, title, description=""):
         return False, f"YT Exception: {e}"
 
 # ==========================================
-# 5. GOOGLE SHEET CONNECTOR
+# 5. GOOGLE SHEET CONNECTOR (FIXED WITHOUT OAUTH2CLIENT)
 # ==========================================
 def get_sheet():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds_dict = json.loads(GOOGLE_CREDS_JSON)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
+    # Direct service account connection from modern gspread
+    client = gspread.service_account_from_dict(creds_dict)
     return client.open("Content_Master").sheet1
 
 # ==========================================
@@ -181,23 +177,21 @@ def main():
         print(f"ERROR: Google Sheet connectivity failed: {e}")
         return
 
-    for idx, row in enumerate(rows, start=2): # Row 1 headers hote hain, loop 2 se shuru hoga
+    for idx, row in enumerate(rows, start=2):
         status = str(row.get('status', '')).strip().lower()
         if status != 'pending':
             continue
             
         print(f"DEBUG: Processing row {idx}...")
         
-        # Row details fetch parameters
         channel_name = str(row.get('channel', '')).strip().lower()
         video_url = row.get('video_url', '')
         caption = row.get('caption', '')
         platforms_to_post = [p.strip().lower() for p in str(row.get('platform', '')).split(',')]
         
-        # Channel Dynamic Config Selection
         if 'billionaire' in channel_name:
             fb_page_id = os.environ.get('FB_PAGE_ID_BILLIONAIRE')
-            ig_business_id = os.environ.get('IG_BUSINESS_ID_BILLIONAIRE') # Variable match fallback
+            ig_business_id = os.environ.get('IG_BUSINESS_ID_BILLIONAIRE')
         else:
             fb_page_id = os.environ.get('FB_PAGE_ID_AI_SALES')
             ig_business_id = os.environ.get('IG_BUSINESS_ID_AI_SALES')
@@ -224,7 +218,7 @@ def main():
             results['youtube'] = "True" if yt_ok else "False"
             if not yt_ok: errors.append(f"YT: {yt_res}")
 
-        # Compile and log string formats
+        # Compile results
         status_str = " | ".join([f"{k}:{v}" for k, v in results.items()])
         if errors:
             status_str += f" (Errors: {', '.join(errors)})"
@@ -232,7 +226,6 @@ def main():
         else:
             sheet.update_cell(idx, list(row.keys()).index('status') + 1, 'success')
             
-        # Log column updates
         if 'log' in row:
             sheet.update_cell(idx, list(row.keys()).index('log') + 1, status_str)
         print(f"ROW {idx} RESULT: {status_str}")
