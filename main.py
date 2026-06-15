@@ -84,7 +84,7 @@ def post_facebook_reel(page_id, video_binary, caption):
         print(f"DEBUG: Initializing Facebook Reel Upload for Page ID: {page_id}")
         init_url = f"https://graph.facebook.com/v25.0/{page_id}/video_reels"
         init_res = requests.post(init_url, data={
-            'upload_phase': 'initialize',
+            'upload_phase': 'START',
             'access_token': FB_USER_TOKEN
         }).json()
         
@@ -99,7 +99,7 @@ def post_facebook_reel(page_id, video_binary, caption):
         
         print("DEBUG: Finalizing Facebook Reel Publication...")
         publish_res = requests.post(init_url, data={
-            'upload_phase': 'finish',
+            'upload_phase': 'FINISH',
             'video_id': video_id,
             'video_state': 'PUBLISHED',
             'description': caption,
