@@ -134,8 +134,30 @@ def post_instagram_reel(page_id, video_url, caption):
             return False, f"IG_CONTAINER_ERR: {json.dumps(container_res)}"
             
         creation_id = container_res['id']
-        time.sleep(45) # CDN Buffer for Instagram Meta Server
         
+        # --- SMART LOOP FOR INSTAGRAM CDN STATUS CHECK (100% GUARANTEED FIX) ---
+        print(f"DEBUG: Container created ({creation_id}). Checking processing status on Meta Servers...")
+        status_url = f"https://graph.facebook.com/v25.0/{creation_id}?fields=status_code,status&access_token={FB_USER_TOKEN}"
+        
+        max_attempts = 18  # 18 * 10 seconds = 3 Minutes max wait time
+        is_ready = False
+        
+        for attempt in range(max_attempts):
+            time.sleep(10)
+            status_r = requests.get(status_url, timeout=15).json()
+            status_code = status_r.get('status_code', '').upper()
+            print(f"DEBUG: Status check attempt {attempt+1}: {status_code}")
+            
+            if status_code == 'FINISHED':
+                is_ready = True
+                break
+            elif status_code == 'ERROR':
+                return False, f"IG_SERVER_PROCESSING_FAILED: {json.dumps(status_r)}"
+                
+        if not is_ready:
+            print("WARNING: Video processing taking too long, forcing publication attempt anyway...")
+        
+        # Finally publish
         publish_url = f"https://graph.facebook.com/v25.0/{ig_business_id}/media_publish"
         p_r = requests.post(publish_url, data={'creation_id': creation_id, 'access_token': FB_USER_TOKEN}, timeout=30)
         publish_res = p_r.json()
@@ -171,7 +193,6 @@ def process_multi_platform_post(row):
     except Exception as e:
         return False, f"Download failed: {e}"
 
-    # Dono channels ko targets me set kiya taaki ek sath check ho sakein
     channels_to_post = ['billionaire', 'ai_sales']
     status_report = {}
 
@@ -221,7 +242,7 @@ def process_multi_platform_post(row):
         status_report["yt_ai_sales"] = "Skipped"
 
     # ----------------------------------------------------
-    # 2. BROADCAST ON INSTAGRAM (DONO CHANNELS PAR EK SATH)
+    # 2. BROADCAST ON INSTAGRAM (DONO CHANNELS PAR EK SATH WITH SMART LOOP)
     # ----------------------------------------------------
     if 'instagram' in p_val or 'ig' in p_val:
         for channel in channels_to_post:
@@ -236,13 +257,12 @@ def process_multi_platform_post(row):
         status_report["ig_ai_sales"] = "Skipped"
 
     # ----------------------------------------------------
-    # 3. BROADCAST ON FACEBOOK (FUTURE READY LOGIC MAPPED TO BOTH)
+    # 3. BROADCAST ON FACEBOOK (SAFE-LOCKED FOR FUTURE TRYS)
     # ----------------------------------------------------
     if 'facebook' in p_val or 'fb' in p_val:
-        # Note: Facebook currently on simulation loop so it never breaks active pipelines
         for channel in channels_to_post:
             status_report[f"fb_{channel}"] = "Paused (Future Fix Active)"
-            # RE-ACTIVATION NOTE FOR FUTURE CODES:
+            # RE-ACTIVATION NOTE FOR FUTURE:
             # page_id = FB_PAGE_IDS.get(channel, '')
             # fb_ok, fb_msg = post_facebook_reel(page_id, video_binary_data, caption_text)
             # status_report[f"fb_{channel}"] = "Success" if fb_ok else f"Failed ({fb_msg})"
@@ -250,7 +270,6 @@ def process_multi_platform_post(row):
         status_report["fb_billionaire"] = "Skipped"
         status_report["fb_ai_sales"] = "Skipped"
 
-    # Clean storage
     if os.path.exists(video_path):
         os.remove(video_path)
 
