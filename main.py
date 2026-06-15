@@ -56,15 +56,19 @@ def get_pending(sheet):
     return pending
 
 def get_yt_access_token(row_dump_str):
-    # Fix: Default fallback agar scan fail ho jaye toh dono me se jo token mile use try kare
-    key = 'billionaire' if 'billionaire' in row_dump_str.lower() else 'ai_sales'
-    refresh_token = YT_TOKENS.get(key, '') or YT_TOKENS.get('billionaire') or YT_TOKENS.get('ai_sales')
-    
+    # DIRECT FIX: Scanning bypass, direct token fetch logic
+    refresh_token = None
+    if 'ai_sales' in row_dump_str.lower():
+        refresh_token = YT_TOKENS.get('ai_sales')
+    else:
+        refresh_token = YT_TOKENS.get('billionaire') or YT_TOKENS.get('ai_sales')
+        
     client_id = os.environ.get('YT_CLIENT_ID', '')
     client_secret = os.environ.get('YT_CLIENT_SECRET', '')
     
     if not refresh_token or not client_id:
-        return None
+        refresh_token = list(YT_TOKENS.values())[0] if YT_TOKENS else None
+        if not refresh_token: return None
         
     try:
         r = requests.post('https://oauth2.googleapis.com/token', data={
