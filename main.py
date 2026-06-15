@@ -5,6 +5,7 @@ import requests
 import pytz
 import time
 import mimetypes
+import re
 import gdown
 from datetime import datetime
 from google.oauth2.service_account import Credentials
@@ -33,13 +34,16 @@ def get_sheet():
         client = gspread.authorize(creds)
         return client.open(SHEET_NAME).sheet1
     except Exception as e:
-        print(f"❌ Google Sheet Access Error: {e}")
+        print(f"❌ Critical Error: Google Sheet access failed: {e}")
         return None
 
 def get_pending(sheet):
     rows = sheet.get_all_records()
     now = datetime.now(TIMEZONE)
     pending = []
+    print(f"DEBUG: Current time = {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"DEBUG: Total rows found in sheet = {len(rows)}")
+
     for i, row in enumerate(rows):
         status = str(row.get('status', '')).strip().lower()
         if status != 'pending':
@@ -52,100 +56,135 @@ def get_pending(sheet):
             if 0 <= diff <= WINDOW_SEC:
                 pending.append((i + 2, row))
         except Exception as e:
-            print(f"⚠️ Row {i+2} Date Error: {e}")
+            print(f"⚠️ Row {i+2} date format error: {e}")
     return pending
 
-def get_yt_access_token(target_key):
-    refresh_token = YT_TOKENS.get(target_key)
+def get_yt_access_token(row_dump_str):
+    key = 'billionaire' if 'billionaire' in row_dump_str.lower() else 'ai_sales'
+    refresh_token = YT_TOKENS.get(key, '')
     client_id = os.environ.get('YT_CLIENT_ID', '')
     client_secret = os.environ.get('YT_CLIENT_SECRET', '')
     
-    if not refresh_token or not client_id or not client_secret:
-        return f"ERROR_MISSING_CREDS_FOR_{target_key.upper()}"
+    if not refresh_token or not client_id:
+        return None
         
-    try:
-        r = requests.post('https://oauth2.googleapis.com/token', data={
-            'client_id': client_id,
-            'client_secret': client_secret,
-            'refresh_token': refresh_token,
-            'grant_type': 'refresh_token'
-        }, timeout=15)
-        res_data = r.json()
-        return res_data.get('access_token', f"OAUTH_ERR: {res_data.get('error')}")
-    except Exception as e:
-        return f"OAUTH_EXCEPTION: {str(e)}"
+    r = requests.post('https://oauth2.googleapis.com/token', data={
+        'client_id': client_id, 'client_secret': client_secret,
+        'refresh_token': refresh_token, 'grant_type': 'refresh_token'
+    })
+    return r.json().get('access_token') if r.status_code == 200 else None
 
 # ========================================================
-# 🎥 STABLE MEDIA ENGINES
+# 🎥 CORE META ENGINES (100% EXPLICIT PAGE TOKENS)
 # ========================================================
+
+def post_facebook_reel(page_id, video_binary, caption):
+    if not page_id or not FB_USER_TOKEN:
+        return False, "FB Credentials Missing"
+    try:
+        print(f"DEBUG: Requesting Page Access Token for Page: {page_id}")
+        accounts_url = f"https://graph.facebook.com/v25.0/me/accounts?access_token={FB_USER_TOKEN}"
+        accounts_res = requests.get(accounts_url).json()
+        
+        page_token = None
+        if 'data' in accounts_res:
+            for page in accounts_res['data']:
+                if str(page['id']) == str(page_id):
+                    page_token = page['access_token']
+                    break
+                    
+        if not page_token:
+            return False, f"Could not find Page Access Token for ID {page_id}."
+
+        print("DEBUG: Initializing Facebook Reel Session with Page Token...")
+        init_url = f"https://graph.facebook.com/v25.0/{page_id}/video_reels"
+        init_res = requests.post(init_url, data={
+            'upload_phase': 'START',
+            'access_token': page_token
+        }).json()
+        
+        if 'video_id' not in init_res:
+            return False, f"FB Init Fail: {json.dumps(init_res.get('error', init_res))}"
+            
+        video_id = init_res['video_id']
+        upload_url = init_res['upload_url']
+        
+        print("DEBUG: Pushing video binary directly to Facebook...")
+        requests.post(upload_url, headers={'Authorization': f'OAuth {page_token}'}, data=video_binary)
+        
+        print("DEBUG: Pausing 20s for Facebook processing...")
+        time.sleep(20)
+        
+        print("DEBUG: Finalizing Reel Publish...")
+        publish_res = requests.post(init_url, data={
+            'upload_phase': 'FINISH',
+            'video_id': video_id,
+            'video_state': 'PUBLISHED',
+            'description': caption,
+            'access_token': page_token
+        }).json()
+        
+        if publish_res.get('success') or 'id' in publish_res:
+            return True, "fb_success"
+        return False, f"FB Finalize Fail: {json.dumps(publish_res.get('error', publish_res))}"
+    except Exception as e:
+        return False, f"FB Exception: {e}"
 
 def post_instagram_reel(page_id, video_url, caption):
     if not page_id or not FB_USER_TOKEN:
-        return False, "IG Credentials Missing"
+        return False, "Instagram/FB Credentials Missing"
     try:
         ig_acc_url = f"https://graph.facebook.com/v25.0/{page_id}?fields=instagram_business_account&access_token={FB_USER_TOKEN}"
-        r_ig = requests.get(ig_acc_url, timeout=20)
-        ig_meta = r_ig.json()
+        ig_meta = requests.get(ig_acc_url).json()
         
         if 'instagram_business_account' not in ig_meta:
-            return False, f"IG_LINK_ERR: {json.dumps(ig_meta)}"
+            return False, "No Instagram Account linked"
             
         ig_business_id = ig_meta['instagram_business_account']['id']
         
         container_url = f"https://graph.facebook.com/v25.0/{ig_business_id}/media"
-        c_r = requests.post(container_url, data={
-            'media_type': 'REELS', 'video_url': video_url, 'caption': caption, 'access_token': FB_USER_TOKEN
-        }, timeout=30)
-        container_res = c_r.json()
+        container_res = requests.post(container_url, data={
+            'media_type': 'REELS',
+            'video_url': video_url,
+            'caption': caption,
+            'access_token': FB_USER_TOKEN
+        }).json()
         
         if 'id' not in container_res:
-            return False, f"IG_CONTAINER_ERR: {json.dumps(container_res)}"
+            return False, f"IG Container Error: {json.dumps(container_res.get('error', container_res))}"
             
         creation_id = container_res['id']
-        status_url = f"https://graph.facebook.com/v25.0/{creation_id}?fields=status_code,status&access_token={FB_USER_TOKEN}"
-        
-        # --- SMART LOOP FOR META SERVER PROCESSING ---
-        is_ready = False
-        for attempt in range(18): # 3 Minutes max wait time
-            time.sleep(10)
-            status_r = requests.get(status_url, timeout=15).json()
-            status_code = status_r.get('status_code', '').upper()
-            
-            if status_code == 'FINISHED':
-                is_ready = True
-                break
-            elif status_code == 'ERROR':
-                return False, f"IG_PROCESSING_FAILED: {json.dumps(status_r)}"
-                
-        if not is_ready:
-            print("WARNING: Timeout reached, attempting forced publication...")
+        print("DEBUG: Waiting 40 seconds for Instagram processing...")
+        time.sleep(40)
         
         publish_url = f"https://graph.facebook.com/v25.0/{ig_business_id}/media_publish"
-        p_r = requests.post(publish_url, data={'creation_id': creation_id, 'access_token': FB_USER_TOKEN}, timeout=30)
-        publish_res = p_r.json()
+        publish_res = requests.post(publish_url, data={
+            'creation_id': creation_id,
+            'access_token': FB_USER_TOKEN
+        }).json()
         
         if 'id' in publish_res:
             return True, "ig_success"
-        return False, f"IG_PUBLISH_ERR: {json.dumps(publish_res)}"
+        return False, f"IG Publish Error: {json.dumps(publish_res.get('error', publish_res))}"
     except Exception as e:
-        return False, f"IG_EXCEPTION: {e}"
+        return False, f"Instagram Exception: {e}"
 
 # ========================================================
-# 🚀 ROUTER DISPATCH (STRICT SINGLE CHANNEL MATCHING)
+# 🚀 SYSTEM DISPATCH ROUTER
 # ========================================================
 
 def process_multi_platform_post(row):
+    row_dump_str = json.dumps(row)
     clean_row = {str(k).lower().strip(): v for k, v in row.items()}
     p_val = str(clean_row.get('platform', '')).lower().strip()
-    channel_col = str(clean_row.get('channel', '')).lower().strip()
     
-    # Strict identification based on row channel
-    if 'billionaire' in channel_col:
-        target_channel = 'billionaire'
-    else:
-        target_channel = 'ai_sales'
-        
+    if not p_val:
+        for val in row.values():
+            if any(x in str(val).lower() for x in ['youtube', 'yt', 'facebook', 'fb', 'instagram', 'ig']):
+                p_val = str(val).lower()
+
     caption_text = f"{row.get('title', 'New Post')}\n\n{row.get('description', '')}\n\n{row.get('hashtags', '')}"
+    
     video_url = row.get('video_url', '')
     raw_download_url = video_url
     if "drive.google.com" in video_url:
@@ -154,8 +193,10 @@ def process_multi_platform_post(row):
         else: file_id = video_url
         raw_download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
 
+    print("DEBUG: Downloading file via gdown...")
     video_path = 'temp_video.mp4'
     try:
+        # FIXED: Removed 'fuzzy=True' to comply with latest gdown versions
         gdown.download(raw_download_url, video_path, quiet=True)
         with open(video_path, 'rb') as f:
             video_binary_data = f.read()
@@ -165,64 +206,60 @@ def process_multi_platform_post(row):
     execution_results = {}
     errors_log = []
 
-    # 1. STRICT YOUTUBE UPLOAD
+    # ----------- 1. YOUTUBE SHORTS -----------
     if 'youtube' in p_val or 'yt' in p_val:
-        try:
-            access_token = get_yt_access_token(target_channel)
-            if not access_token or access_token.startswith("ERROR") or access_token.startswith("OAUTH"):
-                execution_results['youtube'] = False
-                errors_log.append(f"YT_{target_channel.upper()}_TOKEN_ERR")
-            else:
-                headers = {'Authorization': f'Bearer {access_token}'}
-                meta = {
-                    'snippet': {
-                        'title': row.get('title', 'Short Video')[:100],
-                        'description': f"{row.get('description', '')}\n\n{row.get('hashtags', '')}",
-                        'tags': row.get('hashtags', '').replace('#', '').split(),
-                        'categoryId': '22'
-                    },
-                    'status': {'privacyStatus': 'public', 'selfDeclaredMadeForKids': False}
-                }
-                init = requests.post(
-                    'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
-                    headers={**headers, 'Content-Type': 'application/json'}, json=meta, timeout=30
-                )
-                if init.status_code != 200:
-                    execution_results['youtube'] = False
-                    errors_log.append(f"YT_INIT_ERR_{init.status_code}")
-                else:
-                    upload_url = init.headers.get('Location', '')
-                    mime_type, _ = mimetypes.guess_type(video_path)
-                    if not mime_type: mime_type = 'video/mp4'
-                    up = requests.put(
-                        upload_url, data=video_binary_data,
-                        headers={'Content-Type': mime_type, 'Content-Length': str(len(video_binary_data))},
-                        timeout=600
-                    )
-                    if up.status_code in [200, 201]:
-                        execution_results['youtube'] = True
-                    else:
-                        execution_results['youtube'] = False
-                        errors_log.append(f"YT_UPLOAD_ERR_{up.status_code}")
-        except Exception as e:
+        access_token = get_yt_access_token(row_dump_str)
+        if not access_token:
             execution_results['youtube'] = False
-            errors_log.append(f"YT_EXCEPTION_{e}")
+            errors_log.append("YT Token Missing")
+        else:
+            headers = {'Authorization': f'Bearer {access_token}'}
+            meta = {
+                'snippet': {
+                    'title': row.get('title', 'Short Video')[:100],
+                    'description': f"{row.get('description', '')}\n\n{row.get('hashtags', '')}",
+                    'tags': row.get('hashtags', '').replace('#', '').split(),
+                    'categoryId': '22'
+                },
+                'status': {'privacyStatus': 'public', 'selfDeclaredMadeForKids': False}
+            }
+            init = requests.post(
+                'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+                headers={**headers, 'Content-Type': 'application/json'}, json=meta, timeout=30
+            )
+            if init.status_code != 200:
+                execution_results['youtube'] = False
+                errors_log.append(f"YT Init: {init.status_code}")
+            else:
+                upload_url = init.headers.get('Location', '')
+                mime_type, _ = mimetypes.guess_type(video_path)
+                if not mime_type: mime_type = 'video/mp4'
+                up = requests.put(
+                    upload_url, data=video_binary_data,
+                    headers={'Content-Type': mime_type, 'Content-Length': str(len(video_binary_data))},
+                    timeout=900
+                )
+                if up.status_code in [200, 201]:
+                    execution_results['youtube'] = True
+                else:
+                    execution_results['youtube'] = False
+                    errors_log.append(f"YT Upload: {up.status_code}")
 
-    # 2. STRICT INSTAGRAM UPLOAD WITH SMART LOOP
-    if 'instagram' in p_val or 'ig' in p_val:
-        try:
-            page_id = FB_PAGE_IDS.get(target_channel, '')
-            ig_ok, ig_msg = post_instagram_reel(page_id, raw_download_url, caption_text)
-            execution_results['instagram'] = ig_ok
-            if not ig_ok: 
-                errors_log.append(f"IG_{target_channel.upper()}_ERR: {ig_msg}")
-        except Exception as e:
-            execution_results['instagram'] = False
-            errors_log.append(f"IG_EXCEPTION_{e}")
-
-    # 3. FACEBOOK SAFE-MODE PASSTHROUGH
+    # ----------- 2. FACEBOOK REELS -----------
     if 'facebook' in p_val or 'fb' in p_val:
-        execution_results['facebook'] = True
+        target_key = 'billionaire' if 'billionaire' in row_dump_str.lower() else 'ai_sales'
+        page_id = FB_PAGE_IDS.get(target_key, '')
+        fb_ok, fb_msg = post_facebook_reel(page_id, video_binary_data, caption_text)
+        execution_results['facebook'] = fb_ok
+        if not fb_ok: errors_log.append(fb_msg)
+
+    # ----------- 3. INSTAGRAM REELS -----------
+    if 'instagram' in p_val or 'ig' in p_val:
+        target_key = 'billionaire' if 'billionaire' in row_dump_str.lower() else 'ai_sales'
+        page_id = FB_PAGE_IDS.get(target_key, '')
+        ig_ok, ig_msg = post_instagram_reel(page_id, raw_download_url, caption_text)
+        execution_results['instagram'] = ig_ok
+        if not ig_ok: errors_log.append(ig_msg)
 
     if os.path.exists(video_path):
         os.remove(video_path)
@@ -231,9 +268,9 @@ def process_multi_platform_post(row):
         return True, 'skipped'
         
     all_success = all(execution_results.values())
-    combined_msg = " | ".join([f"{k}:{'Success' if v else 'Failed'}" for k, v in execution_results.items()])
+    combined_msg = " | ".join([f"{k}:{v}" for k, v in execution_results.items()])
     if errors_log:
-        combined_msg += f" (Logs: {', '.join(errors_log)})"
+        combined_msg += f" (Errors: {', '.join(errors_log)})"
 
     return all_success, combined_msg
 
