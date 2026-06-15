@@ -218,6 +218,11 @@ def process_multi_platform_post(row):
     execution_results = {}
     errors_log = []
 
+    # --- CHANNEL CHECK LOGIC (FIXED) ---
+    channel_name = str(clean_row.get('channel', '')).lower().strip()
+    target_key = 'billionaire' if 'billionaire' in channel_name else 'ai_sales'
+    print(f"DEBUG: Detected Channel from Sheet: '{channel_name}' -> Selected Meta Target: '{target_key}'")
+
     # 1. YOUTUBE REELS
     if 'youtube' in p_val or 'yt' in p_val:
         access_token = get_yt_access_token(row_dump_str)
@@ -259,18 +264,18 @@ def process_multi_platform_post(row):
                     execution_results['youtube'] = False
                     errors_log.append(f"YT_UPLOAD_API_ERR_{up.status_code}")
 
-    # 2. FACEBOOK REELS
+    # 2. FACEBOOK REELS (FIXED WITH EXACT TARGET KEY)
     if 'facebook' in p_val or 'fb' in p_val:
-        target_key = 'billionaire' if 'billionaire' in row_dump_str.lower() else 'ai_sales'
         page_id = FB_PAGE_IDS.get(target_key, '')
+        print(f"DEBUG: Dispatching FB Reel to Page ID: {page_id} for {target_key}")
         fb_ok, fb_msg = post_facebook_reel(page_id, video_binary_data, caption_text)
         execution_results['facebook'] = fb_ok
         if not fb_ok: errors_log.append(fb_msg)
 
-    # 3. INSTAGRAM REELS
+    # 3. INSTAGRAM REELS (FIXED WITH EXACT TARGET KEY)
     if 'instagram' in p_val or 'ig' in p_val:
-        target_key = 'billionaire' if 'billionaire' in row_dump_str.lower() else 'ai_sales'
         page_id = FB_PAGE_IDS.get(target_key, '')
+        print(f"DEBUG: Dispatching IG Reel using Page ID Asset: {page_id} for {target_key}")
         ig_ok, ig_msg = post_instagram_reel(page_id, raw_download_url, caption_text)
         execution_results['instagram'] = ig_ok
         if not ig_ok: errors_log.append(ig_msg)
