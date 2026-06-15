@@ -61,11 +61,17 @@ def get_pending(sheet):
     return pending
 
 def get_yt_access_token(channel):
-    refresh_token = YT_TOKENS.get(channel, '')
+    # Flexible key matching to prevent token missing error
+    clean_channel = str(channel).strip().lower()
+    key = 'billionaire' if 'billionaire' in clean_channel else 'ai_sales'
+    
+    refresh_token = YT_TOKENS.get(key, '')
     client_id = os.environ.get('YT_CLIENT_ID', '')
     client_secret = os.environ.get('YT_CLIENT_SECRET', '')
+    
     if not refresh_token or not client_id:
         return None
+        
     r = requests.post('https://oauth2.googleapis.com/token', data={
         'client_id': client_id, 'client_secret': client_secret,
         'refresh_token': refresh_token, 'grant_type': 'refresh_token'
@@ -73,29 +79,45 @@ def get_yt_access_token(channel):
     return r.json().get('access_token') if r.status_code == 200 else None
 
 # ========================================================
-# 🎥 NEW META ENGINES (FACEBOOK REELS & INSTAGRAM REELS)
+# 🎥 FIXED META ENGINES (WITH AUTO PAGE TOKEN CONVERSION)
 # ========================================================
 
 def post_facebook_reel(page_id, video_binary, caption):
-    """Facebook Page par Reel publish karne ke liye"""
+    """Facebook Page par Reel publish karne ke liye (With Dynamic Page Token)"""
     if not page_id or not FB_USER_TOKEN:
         return False, "FB Credentials Missing"
     try:
-        print(f"DEBUG: Initializing Facebook Reel Upload for Page ID: {page_id}")
+        print(f"DEBUG: Converting User Token to Page Token for Page ID: {page_id}")
+        # Automatically pull specific page token to bypass access permission #200 error
+        accounts_url = f"https://graph.facebook.com/v25.0/me/accounts?access_token={FB_USER_TOKEN}"
+        accounts_res = requests.get(accounts_url).json()
+        
+        page_token = FB_USER_TOKEN
+        if 'data' in accounts_res:
+            for page in accounts_res['data']:
+                if str(page['id']) == str(page_id):
+                    page_token = page['access_token']
+                    print("DEBUG: Successfully generated implicit Page Access Token.")
+                    break
+
+        print(f"DEBUG: Initializing Facebook Reel Upload...")
         init_url = f"https://graph.facebook.com/v25.0/{page_id}/video_reels"
         init_res = requests.post(init_url, data={
             'upload_phase': 'START',
-            'access_token': FB_USER_TOKEN
+            'access_token': page_token
         }).json()
         
         if 'video_id' not in init_res:
-            return False, f"FB Init Error: {init_res}"
+            return False, f"FB Init Error: {init_res.get('error', init_res)}"
             
         video_id = init_res['video_id']
         upload_url = init_res['upload_url']
         
-        print(f"DEBUG: Uploading Reel Binary to Facebook... Video ID: {video_id}")
-        upload_res = requests.post(upload_url, headers={'Authorization': f'OAuth {FB_USER_TOKEN}'}, data=video_binary)
+        print(f"DEBUG: Uploading Reel Binary to Facebook...")
+        requests.post(upload_url, headers={'Authorization': f'OAuth {page_token}'}, data=video_binary)
+        
+        print("DEBUG: Waiting 15s for processing...")
+        time.sleep(15)
         
         print("DEBUG: Finalizing Facebook Reel Publication...")
         publish_res = requests.post(init_url, data={
@@ -103,21 +125,21 @@ def post_facebook_reel(page_id, video_binary, caption):
             'video_id': video_id,
             'video_state': 'PUBLISHED',
             'description': caption,
-            'access_token': FB_USER_TOKEN
+            'access_token': page_token
         }).json()
         
         if publish_res.get('success') or 'id' in publish_res:
-            return True, publish_res.get('id', 'fb_success')
-        return False, f"FB Finish Error: {publish_res}"
+            return True, "fb_success"
+        return False, f"FB Finish Error: {publish_res.get('error', publish_res)}"
     except Exception as e:
         return False, f"FB Exception: {e}"
 
 def post_instagram_reel(page_id, video_url, caption):
-    """Instagram Business Profile par Reel publish karne ke liye (Requires hosted Video URL)"""
+    """Instagram Business Profile par Reel publish karne ke liye"""
     if not page_id or not FB_USER_TOKEN:
         return False, "Instagram/FB Credentials Missing"
     try:
-        print(f"DEBUG: Fetching Linked Instagram Account ID from Facebook Page: {page_id}")
+        print(f"DEBUG: Fetching Linked Instagram Account ID...")
         ig_acc_url = f"https://graph.facebook.com/v25.0/{page_id}?fields=instagram_business_account&access_token={FB_USER_TOKEN}"
         ig_meta = requests.get(ig_acc_url).json()
         
@@ -127,7 +149,6 @@ def post_instagram_reel(page_id, video_url, caption):
         ig_business_id = ig_meta['instagram_business_account']['id']
         print(f"DEBUG: Instagram Business ID Found: {ig_business_id}")
         
-        # Step 1: Create Container (Instagram Graph API requires a public direct link)
         container_url = f"https://graph.facebook.com/v25.0/{ig_business_id}/media"
         container_res = requests.post(container_url, data={
             'media_type': 'REELS',
@@ -137,15 +158,12 @@ def post_instagram_reel(page_id, video_url, caption):
         }).json()
         
         if 'id' not in container_res:
-            return False, f"IG Container Error: {container_res}"
+            return False, f"IG Container Error: {container_res.get('error', container_res)}"
             
         creation_id = container_res['id']
+        print("DEBUG: Waiting 40 seconds for Instagram to process the video...")
+        time.sleep(40)
         
-        # Wait for video processing on Instagram's server
-        print("DEBUG: Waiting 30 seconds for Instagram to process the video container...")
-        time.sleep(30)
-        
-        # Step 2: Publish Container
         publish_url = f"https://graph.facebook.com/v25.0/{ig_business_id}/media_publish"
         publish_res = requests.post(publish_url, data={
             'creation_id': creation_id,
@@ -153,8 +171,8 @@ def post_instagram_reel(page_id, video_url, caption):
         }).json()
         
         if 'id' in publish_res:
-            return True, publish_res['id']
-        return False, f"IG Publish Error: {publish_res}"
+            return True, "ig_success"
+        return False, f"IG Publish Error: {publish_res.get('error', publish_res)}"
     except Exception as e:
         return False, f"Instagram Exception: {e}"
 
@@ -170,7 +188,7 @@ def process_multi_platform_post(row):
     # Text Payload Formatting
     caption_text = f"{row.get('title', 'New Post')}\n\n{row.get('description', '')}\n\n{row.get('hashtags', '')}"
     
-    # 1. Download Video Logic (Kept exactly same as your code)
+    # Download Video Logic
     video_url = row.get('video_url', '')
     raw_download_url = video_url
     if "drive.google.com" in video_url:
@@ -189,7 +207,6 @@ def process_multi_platform_post(row):
     except Exception as e:
         return False, f"Download failed: {e}"
 
-    # Status tracking map for platforms
     execution_results = {}
     errors_log = []
 
@@ -203,7 +220,7 @@ def process_multi_platform_post(row):
             headers = {'Authorization': f'Bearer {access_token}'}
             meta = {
                 'snippet': {
-                    'title': row.get('title', 'Short Video')[:100], # YouTube max 100 chars limit safely
+                    'title': row.get('title', 'Short Video')[:100],
                     'description': f"{row.get('description', '')}\n\n{row.get('hashtags', '')}",
                     'tags': row.get('hashtags', '').replace('#', '').split(),
                     'categoryId': '22'
@@ -234,26 +251,25 @@ def process_multi_platform_post(row):
 
     # ----------- PLATFORM 2: FACEBOOK REELS -----------
     if 'facebook' in p_val or 'fb' in p_val:
-        page_id = FB_PAGE_IDS.get(channel, '')
+        target_key = 'billionaire' if 'billionaire' in channel else 'ai_sales'
+        page_id = FB_PAGE_IDS.get(target_key, '')
         fb_ok, fb_msg = post_facebook_reel(page_id, video_binary_data, caption_text)
         execution_results['facebook'] = fb_ok
         if not fb_ok: errors_log.append(fb_msg)
 
     # ----------- PLATFORM 3: INSTAGRAM REELS -----------
     if 'instagram' in p_val or 'ig' in p_val:
-        page_id = FB_PAGE_IDS.get(channel, '')
-        # Instagram requires a direct link, raw_download_url functions natively here
+        target_key = 'billionaire' if 'billionaire' in channel else 'ai_sales'
+        page_id = FB_PAGE_IDS.get(target_key, '')
         ig_ok, ig_msg = post_instagram_reel(page_id, raw_download_url, caption_text)
         execution_results['instagram'] = ig_ok
         if not ig_ok: errors_log.append(ig_msg)
 
-    # Cleanup temp file safely
     if os.path.exists(video_path):
         os.remove(video_path)
 
-    # Check overall success state
     if not execution_results:
-        return True, 'skipped' # Row had no valid platform selected
+        return True, 'skipped'
         
     all_success = all(execution_results.values())
     combined_msg = " | ".join([f"{k}:{v}" for k, v in execution_results.items()])
