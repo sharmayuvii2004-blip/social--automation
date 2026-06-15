@@ -79,7 +79,6 @@ def get_yt_access_token(row_dump_str):
 # ========================================================
 
 def post_facebook_reel(page_id, video_binary, caption):
-    """Explicitly converts User Token to Page Token to destroy permission errors"""
     if not page_id or not FB_USER_TOKEN:
         return False, "FB Credentials Missing"
     try:
@@ -95,7 +94,7 @@ def post_facebook_reel(page_id, video_binary, caption):
                     break
                     
         if not page_token:
-            return False, f"Could not find Page Access Token for ID {page_id}. Check Admin Roles."
+            return False, f"Could not find Page Access Token for ID {page_id}."
 
         print("DEBUG: Initializing Facebook Reel Session with Page Token...")
         init_url = f"https://graph.facebook.com/v25.0/{page_id}/video_reels"
@@ -197,7 +196,8 @@ def process_multi_platform_post(row):
     print("DEBUG: Downloading file via gdown...")
     video_path = 'temp_video.mp4'
     try:
-        gdown.download(raw_download_url, video_path, quiet=True, fuzzy=True)
+        # FIXED: Removed 'fuzzy=True' to comply with latest gdown versions
+        gdown.download(raw_download_url, video_path, quiet=True)
         with open(video_path, 'rb') as f:
             video_binary_data = f.read()
     except Exception as e:
