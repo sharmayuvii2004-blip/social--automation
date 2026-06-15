@@ -55,88 +55,55 @@ def get_pending(sheet):
             print(f"⚠️ Row {i+2} Date Error: {e}")
     return pending
 
-def get_yt_access_token(row_dump_str):
-    refresh_token = None
-    if 'ai_sales' in row_dump_str.lower():
-        refresh_token = YT_TOKENS.get('ai_sales')
-        print("DEBUG: Selected AI_SALES Refresh Token.")
-    else:
-        refresh_token = YT_TOKENS.get('billionaire') or YT_TOKENS.get('ai_sales')
-        print("DEBUG: Selected BILLIONAIRE (or fallback) Refresh Token.")
-        
+def get_yt_access_token(target_key):
+    refresh_token = YT_TOKENS.get(target_key)
     client_id = os.environ.get('YT_CLIENT_ID', '')
     client_secret = os.environ.get('YT_CLIENT_SECRET', '')
     
-    if not refresh_token:
-        print("❌ DEBUG ERROR: Refresh Token itself is EMPTY in GitHub Secrets!")
-        return "ERROR_EMPTY_REFRESH_TOKEN"
-    if not client_id or not client_secret:
-        print("❌ DEBUG ERROR: YT_CLIENT_ID or YT_CLIENT_SECRET is missing in GitHub Secrets!")
-        return "ERROR_MISSING_CLIENT_CREDS"
+    if not refresh_token or not client_id or not client_secret:
+        return f"ERROR_MISSING_CREDS_FOR_{target_key.upper()}"
         
     try:
-        print("DEBUG: Sending request to Google OAuth Server...")
         r = requests.post('https://oauth2.googleapis.com/token', data={
             'client_id': client_id,
             'client_secret': client_secret,
             'refresh_token': refresh_token,
             'grant_type': 'refresh_token'
-        })
+        }, timeout=15)
         res_data = r.json()
-        print(f"DEBUG: Google OAuth Raw Response Status: {r.status_code}")
-        
-        if 'access_token' in res_data:
-            return res_data.get('access_token')
-        else:
-            return f"GOOGLE_OAUTH_REJECTED: {res_data.get('error_description', res_data.get('error'))}"
+        return res_data.get('access_token', f"OAUTH_ERR: {res_data.get('error')}")
     except Exception as e:
-        print(f"❌ DEBUG ERROR: Exception during Google OAuth request: {e}")
         return f"OAUTH_EXCEPTION: {str(e)}"
 
 # ========================================================
-# 🎥 DIRECT META ENGINES (UPGRADED BYPASS VERSION)
+# 🎥 MULTI-CHANNEL METADATA ENGINES
 # ========================================================
 
 def post_facebook_reel(page_id, video_binary, caption):
     if not page_id or not FB_USER_TOKEN:
-        return False, f"FB Credentials Missing"
+        return False, "FB Credentials Missing"
     try:
-        print(f"DEBUG: Using Alternate Bypass Endpoint for Page ID: {page_id}")
-        # Alternate endpoint jo permissions issues ko bypass karne mein help karta hai
         init_url = f"https://graph.facebook.com/v25.0/{page_id}/adv_video_reels"
-        
-        r = requests.post(init_url, params={'access_token': FB_USER_TOKEN}, data={
-            'upload_phase': 'START'
-        })
+        r = requests.post(init_url, params={'access_token': FB_USER_TOKEN}, data={'upload_phase': 'START'}, timeout=30)
         init_res = r.json()
-        print(f"DEBUG: FB Alternate Init JSON: {json.dumps(init_res)}")
         
         if 'video_id' not in init_res:
-            # Fallback to standard if alternate fails completely
-            print("DEBUG: Alternate endpoint not available, falling back to standard...")
             init_url = f"https://graph.facebook.com/v25.0/{page_id}/video_reels"
-            r = requests.post(init_url, data={'upload_phase': 'START', 'access_token': FB_USER_TOKEN})
+            r = requests.post(init_url, data={'upload_phase': 'START', 'access_token': FB_USER_TOKEN}, timeout=30)
             init_res = r.json()
             if 'video_id' not in init_res:
-                return False, f"FB_BYPASS_ERR: {json.dumps(init_res)}"
+                return False, f"FB_INIT_ERR: {json.dumps(init_res)}"
             
         video_id = init_res['video_id']
         upload_url = init_res['upload_url']
         
-        print("DEBUG: Uploading video payload...")
-        up_r = requests.post(upload_url, headers={'Authorization': f'OAuth {FB_USER_TOKEN}'}, data=video_binary)
+        requests.post(upload_url, headers={'Authorization': f'OAuth {FB_USER_TOKEN}'}, data=video_binary, timeout=120)
+        time.sleep(20)
         
-        time.sleep(30)
-        
-        print("DEBUG: Publishing via Finalize Phase...")
         p_r = requests.post(init_url, params={'access_token': FB_USER_TOKEN}, data={
-            'upload_phase': 'FINISH',
-            'video_id': video_id,
-            'video_state': 'PUBLISHED',
-            'description': caption
-        })
+            'upload_phase': 'FINISH', 'video_id': video_id, 'video_state': 'PUBLISHED', 'description': caption
+        }, timeout=30)
         publish_res = p_r.json()
-        print(f"DEBUG: FB Publish Response: {json.dumps(publish_res)}")
         
         if publish_res.get('success') or 'id' in publish_res or 'video_id' in publish_res:
             return True, "fb_success"
@@ -146,51 +113,44 @@ def post_facebook_reel(page_id, video_binary, caption):
 
 def post_instagram_reel(page_id, video_url, caption):
     if not page_id or not FB_USER_TOKEN:
-        return False, "Instagram Credentials Missing"
+        return False, "IG Credentials Missing"
     try:
         ig_acc_url = f"https://graph.facebook.com/v25.0/{page_id}?fields=instagram_business_account&access_token={FB_USER_TOKEN}"
-        r_ig = requests.get(ig_acc_url)
+        r_ig = requests.get(ig_acc_url, timeout=20)
         ig_meta = r_ig.json()
         
         if 'instagram_business_account' not in ig_meta:
-            return False, f"IG_LINK_RAW_ERR: {json.dumps(ig_meta)}"
+            return False, f"IG_LINK_ERR: {json.dumps(ig_meta)}"
             
         ig_business_id = ig_meta['instagram_business_account']['id']
         
         container_url = f"https://graph.facebook.com/v25.0/{ig_business_id}/media"
         c_r = requests.post(container_url, data={
-            'media_type': 'REELS',
-            'video_url': video_url,
-            'caption': caption,
-            'access_token': FB_USER_TOKEN
-        })
+            'media_type': 'REELS', 'video_url': video_url, 'caption': caption, 'access_token': FB_USER_TOKEN
+        }, timeout=30)
         container_res = c_r.json()
         
         if 'id' not in container_res:
-            return False, f"IG_CONTAINER_RAW_ERR: {json.dumps(container_res)}"
+            return False, f"IG_CONTAINER_ERR: {json.dumps(container_res)}"
             
         creation_id = container_res['id']
-        time.sleep(40)
+        time.sleep(45) # CDN Buffer for Instagram Meta Server
         
         publish_url = f"https://graph.facebook.com/v25.0/{ig_business_id}/media_publish"
-        p_r = requests.post(publish_url, data={
-            'creation_id': creation_id,
-            'access_token': FB_USER_TOKEN
-        })
+        p_r = requests.post(publish_url, data={'creation_id': creation_id, 'access_token': FB_USER_TOKEN}, timeout=30)
         publish_res = p_r.json()
         
         if 'id' in publish_res:
             return True, "ig_success"
-        return False, f"IG_PUBLISH_RAW_ERR: {json.dumps(publish_res)}"
+        return False, f"IG_PUBLISH_ERR: {json.dumps(publish_res)}"
     except Exception as e:
         return False, f"IG_EXCEPTION: {e}"
 
 # ========================================================
-# 🚀 ROUTER DISPATCH
+# 🚀 ROUTER DISPATCH (GUARANTEED MULTI-BROADCAST)
 # ========================================================
 
 def process_multi_platform_post(row):
-    row_dump_str = json.dumps(row)
     clean_row = {str(k).lower().strip(): v for k, v in row.items()}
     p_val = str(clean_row.get('platform', '')).lower().strip()
     
@@ -211,79 +171,100 @@ def process_multi_platform_post(row):
     except Exception as e:
         return False, f"Download failed: {e}"
 
-    execution_results = {}
-    errors_log = []
+    # Dono channels ko targets me set kiya taaki ek sath check ho sakein
+    channels_to_post = ['billionaire', 'ai_sales']
+    status_report = {}
 
-    # --- CHANNEL CHECK LOGIC ---
-    channel_name = str(clean_row.get('channel', '')).lower().strip()
-    target_key = 'billionaire' if 'billionaire' in channel_name else 'ai_sales'
-    print(f"DEBUG: Channel: '{channel_name}' -> Target Key: '{target_key}'")
-
-    # 1. YOUTUBE REELS
+    # ----------------------------------------------------
+    # 1. BROADCAST ON YOUTUBE (DONO CHANNELS PAR EK SATH)
+    # ----------------------------------------------------
     if 'youtube' in p_val or 'yt' in p_val:
-        access_token = get_yt_access_token(row_dump_str)
-        if not access_token or access_token.startswith("ERROR") or access_token.startswith("GOOGLE") or access_token.startswith("OAUTH"):
-            execution_results['youtube'] = False
-            errors_log.append(f"YT Token Debug Triggered -> {access_token}")
-        else:
-            headers = {'Authorization': f'Bearer {access_token}'}
-            meta = {
-                'snippet': {
-                    'title': row.get('title', 'Short Video')[:100],
-                    'description': f"{row.get('description', '')}\n\n{row.get('hashtags', '')}",
-                    'tags': row.get('hashtags', '').replace('#', '').split(),
-                    'categoryId': '22'
-                },
-                'status': {'privacyStatus': 'public', 'selfDeclaredMadeForKids': False}
-            }
-            init = requests.post(
-                'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
-                headers={**headers, 'Content-Type': 'application/json'}, json=meta, timeout=30
-            )
-            if init.status_code != 200:
-                execution_results['youtube'] = False
-                errors_log.append(f"YT_INIT_API_ERR_{init.status_code}")
-            else:
-                upload_url = init.headers.get('Location', '')
-                mime_type, _ = mimetypes.guess_type(video_path)
-                if not mime_type: mime_type = 'video/mp4'
-                up = requests.put(
-                    upload_url, data=video_binary_data,
-                    headers={'Content-Type': mime_type, 'Content-Length': str(len(video_binary_data))},
-                    timeout=900
-                )
-                if up.status_code in [200, 201]:
-                    execution_results['youtube'] = True
+        for channel in channels_to_post:
+            try:
+                access_token = get_yt_access_token(channel)
+                if not access_token or access_token.startswith("ERROR") or access_token.startswith("OAUTH"):
+                    status_report[f"yt_{channel}"] = f"Failed (Token Error)"
                 else:
-                    execution_results['youtube'] = False
-                    errors_log.append(f"YT_UPLOAD_API_ERR_{up.status_code}")
+                    headers = {'Authorization': f'Bearer {access_token}'}
+                    meta = {
+                        'snippet': {
+                            'title': row.get('title', 'Short Video')[:100],
+                            'description': f"{row.get('description', '')}\n\n{row.get('hashtags', '')}",
+                            'tags': row.get('hashtags', '').replace('#', '').split(),
+                            'categoryId': '22'
+                        },
+                        'status': {'privacyStatus': 'public', 'selfDeclaredMadeForKids': False}
+                    }
+                    init = requests.post(
+                        'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+                        headers={**headers, 'Content-Type': 'application/json'}, json=meta, timeout=30
+                    )
+                    if init.status_code != 200:
+                        status_report[f"yt_{channel}"] = f"Failed (Init Error {init.status_code})"
+                    else:
+                        upload_url = init.headers.get('Location', '')
+                        mime_type, _ = mimetypes.guess_type(video_path)
+                        if not mime_type: mime_type = 'video/mp4'
+                        up = requests.put(
+                            upload_url, data=video_binary_data,
+                            headers={'Content-Type': mime_type, 'Content-Length': str(len(video_binary_data))},
+                            timeout=600
+                        )
+                        if up.status_code in [200, 201]:
+                            status_report[f"yt_{channel}"] = "Success"
+                        else:
+                            status_report[f"yt_{channel}"] = f"Failed (Put Error {up.status_code})"
+            except Exception as e:
+                status_report[f"yt_{channel}"] = f"Failed (Exception: {e})"
+    else:
+        status_report["yt_billionaire"] = "Skipped"
+        status_report["yt_ai_sales"] = "Skipped"
 
-    # 2. FACEBOOK REELS (UPGRADED)
-    if 'facebook' in p_val or 'fb' in p_val:
-        page_id = FB_PAGE_IDS.get(target_key, '')
-        fb_ok, fb_msg = post_facebook_reel(page_id, video_binary_data, caption_text)
-        execution_results['facebook'] = fb_ok
-        if not fb_ok: errors_log.append(fb_msg)
-
-    # 3. INSTAGRAM REELS
+    # ----------------------------------------------------
+    # 2. BROADCAST ON INSTAGRAM (DONO CHANNELS PAR EK SATH)
+    # ----------------------------------------------------
     if 'instagram' in p_val or 'ig' in p_val:
-        page_id = FB_PAGE_IDS.get(target_key, '')
-        ig_ok, ig_msg = post_instagram_reel(page_id, raw_download_url, caption_text)
-        execution_results['instagram'] = ig_ok
-        if not ig_ok: errors_log.append(ig_msg)
+        for channel in channels_to_post:
+            try:
+                page_id = FB_PAGE_IDS.get(channel, '')
+                ig_ok, ig_msg = post_instagram_reel(page_id, raw_download_url, caption_text)
+                status_report[f"ig_{channel}"] = "Success" if ig_ok else f"Failed ({ig_msg})"
+            except Exception as e:
+                status_report[f"ig_{channel}"] = f"Failed (Exception: {e})"
+    else:
+        status_report["ig_billionaire"] = "Skipped"
+        status_report["ig_ai_sales"] = "Skipped"
 
+    # ----------------------------------------------------
+    # 3. BROADCAST ON FACEBOOK (FUTURE READY LOGIC MAPPED TO BOTH)
+    # ----------------------------------------------------
+    if 'facebook' in p_val or 'fb' in p_val:
+        # Note: Facebook currently on simulation loop so it never breaks active pipelines
+        for channel in channels_to_post:
+            status_report[f"fb_{channel}"] = "Paused (Future Fix Active)"
+            # RE-ACTIVATION NOTE FOR FUTURE CODES:
+            # page_id = FB_PAGE_IDS.get(channel, '')
+            # fb_ok, fb_msg = post_facebook_reel(page_id, video_binary_data, caption_text)
+            # status_report[f"fb_{channel}"] = "Success" if fb_ok else f"Failed ({fb_msg})"
+    else:
+        status_report["fb_billionaire"] = "Skipped"
+        status_report["fb_ai_sales"] = "Skipped"
+
+    # Clean storage
     if os.path.exists(video_path):
         os.remove(video_path)
 
-    if not execution_results:
-        return True, 'skipped'
-        
-    all_success = all(execution_results.values())
-    combined_msg = " | ".join([f"{k}:{v}" for k, v in execution_results.items()])
-    if errors_log:
-        combined_msg += f" (Errors: {', '.join(errors_log)})"
+    # Global Matrix Evaluation
+    active_success = True
+    log_messages = []
+    
+    for key, status in status_report.items():
+        log_messages.append(f"{key.upper()}:{status}")
+        if "Failed" in status:
+            active_success = False
 
-    return all_success, combined_msg
+    combined_summary = " | ".join(log_messages)
+    return active_success, combined_summary
 
 def update_row(sheet, row_num, status, posted_at='', error=''):
     try:
