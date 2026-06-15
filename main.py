@@ -60,9 +60,7 @@ def get_pending(sheet):
     return pending
 
 def get_yt_access_token(row_dump_str):
-    # Fallback absolute check: text me kahin bhi billionaire ho to wo key use karo
     key = 'billionaire' if 'billionaire' in row_dump_str.lower() else 'ai_sales'
-    
     refresh_token = YT_TOKENS.get(key, '')
     client_id = os.environ.get('YT_CLIENT_ID', '')
     client_secret = os.environ.get('YT_CLIENT_SECRET', '')
@@ -77,51 +75,59 @@ def get_yt_access_token(row_dump_str):
     return r.json().get('access_token') if r.status_code == 200 else None
 
 # ========================================================
-# 🎥 BULLETPROOF META ENGINES (BYPASSES PERMISSION #200)
+# 🎥 CORE META ENGINES (100% EXPLICIT PAGE TOKENS)
 # ========================================================
 
-def post_facebook_reel(page_id, video_url, caption):
-    """Bypasses permissions by using direct containerized URL push method via User Token"""
+def post_facebook_reel(page_id, video_binary, caption):
+    """Explicitly converts User Token to Page Token to destroy permission errors"""
     if not page_id or not FB_USER_TOKEN:
         return False, "FB Credentials Missing"
     try:
-        print(f"DEBUG: Initializing FB Video Feed API for Page ID: {page_id}")
+        print(f"DEBUG: Requesting Page Access Token for Page: {page_id}")
+        accounts_url = f"https://graph.facebook.com/v25.0/me/accounts?access_token={FB_USER_TOKEN}"
+        accounts_res = requests.get(accounts_url).json()
         
-        # Step 1: Alternate Posting API node that bypasses the strict #200 video_reels role check
-        feed_url = f"https://graph.facebook.com/v25.0/{page_id}/videos"
-        payload = {
-            'description': caption,
-            'file_url': video_url,
-            'access_token': FB_USER_TOKEN
-        }
-        
-        res = requests.post(feed_url, data=payload).json()
-        
-        if 'id' in res:
-            return True, "fb_success"
-            
-        # Step 2: Fallback to token generation method if explicit feed node fails
-        acc_url = f"https://graph.facebook.com/v25.0/me/accounts?access_token={FB_USER_TOKEN}"
-        acc_res = requests.get(acc_url).json()
-        if 'data' in acc_res:
-            for page in acc_res['data']:
+        page_token = None
+        if 'data' in accounts_res:
+            for page in accounts_res['data']:
                 if str(page['id']) == str(page_id):
-                    # Execute upload via implicit token
-                    fallback_url = f"https://graph.facebook.com/v25.0/{page_id}/video_reels"
-                    init = requests.post(fallback_url, data={'upload_phase': 'START', 'access_token': page['access_token']}).json()
-                    if 'upload_url' in init:
-                        # Direct stream link passing instead of failing
-                        video_binary = requests.get(video_url).content
-                        requests.post(init['upload_url'], headers={'Authorization': f"OAuth {page['access_token']}"}, data=video_binary)
-                        time.sleep(15)
-                        pub = requests.post(fallback_url, data={
-                            'upload_phase': 'FINISH', 'video_id': init['video_id'],
-                            'video_state': 'PUBLISHED', 'description': caption, 'access_token': page['access_token']
-                        }).json()
-                        if pub.get('success') or 'id' in pub:
-                            return True, "fb_fallback_success"
-                            
-        return False, f"FB Error: {json.dumps(res.get('error', res))}"
+                    page_token = page['access_token']
+                    break
+                    
+        if not page_token:
+            return False, f"Could not find Page Access Token for ID {page_id}. Check Admin Roles."
+
+        print("DEBUG: Initializing Facebook Reel Session with Page Token...")
+        init_url = f"https://graph.facebook.com/v25.0/{page_id}/video_reels"
+        init_res = requests.post(init_url, data={
+            'upload_phase': 'START',
+            'access_token': page_token
+        }).json()
+        
+        if 'video_id' not in init_res:
+            return False, f"FB Init Fail: {json.dumps(init_res.get('error', init_res))}"
+            
+        video_id = init_res['video_id']
+        upload_url = init_res['upload_url']
+        
+        print("DEBUG: Pushing video binary directly to Facebook...")
+        requests.post(upload_url, headers={'Authorization': f'OAuth {page_token}'}, data=video_binary)
+        
+        print("DEBUG: Pausing 20s for Facebook processing...")
+        time.sleep(20)
+        
+        print("DEBUG: Finalizing Reel Publish...")
+        publish_res = requests.post(init_url, data={
+            'upload_phase': 'FINISH',
+            'video_id': video_id,
+            'video_state': 'PUBLISHED',
+            'description': caption,
+            'access_token': page_token
+        }).json()
+        
+        if publish_res.get('success') or 'id' in publish_res:
+            return True, "fb_success"
+        return False, f"FB Finalize Fail: {json.dumps(publish_res.get('error', publish_res))}"
     except Exception as e:
         return False, f"FB Exception: {e}"
 
@@ -149,6 +155,7 @@ def post_instagram_reel(page_id, video_url, caption):
             return False, f"IG Container Error: {json.dumps(container_res.get('error', container_res))}"
             
         creation_id = container_res['id']
+        print("DEBUG: Waiting 40 seconds for Instagram processing...")
         time.sleep(40)
         
         publish_url = f"https://graph.facebook.com/v25.0/{ig_business_id}/media_publish"
@@ -164,17 +171,14 @@ def post_instagram_reel(page_id, video_url, caption):
         return False, f"Instagram Exception: {e}"
 
 # ========================================================
-# 🚀 CORE ROUTER FOR ALL THREE PLATFORMS
+# 🚀 SYSTEM DISPATCH ROUTER
 # ========================================================
 
 def process_multi_platform_post(row):
-    # Dump entire row to string to perform broad structural checks
     row_dump_str = json.dumps(row)
-    
     clean_row = {str(k).lower().strip(): v for k, v in row.items()}
     p_val = str(clean_row.get('platform', '')).lower().strip()
     
-    # Fallback to check if 'platform' column wasn't fetched perfectly by name match
     if not p_val:
         for val in row.values():
             if any(x in str(val).lower() for x in ['youtube', 'yt', 'facebook', 'fb', 'instagram', 'ig']):
@@ -190,7 +194,7 @@ def process_multi_platform_post(row):
         else: file_id = video_url
         raw_download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
 
-    print("DEBUG: Downloading asset from Drive globally...")
+    print("DEBUG: Downloading file via gdown...")
     video_path = 'temp_video.mp4'
     try:
         gdown.download(raw_download_url, video_path, quiet=True, fuzzy=True)
@@ -202,7 +206,7 @@ def process_multi_platform_post(row):
     execution_results = {}
     errors_log = []
 
-    # ----------- PLATFORM 1: YOUTUBE SHORTS -----------
+    # ----------- 1. YOUTUBE SHORTS -----------
     if 'youtube' in p_val or 'yt' in p_val:
         access_token = get_yt_access_token(row_dump_str)
         if not access_token:
@@ -241,15 +245,15 @@ def process_multi_platform_post(row):
                     execution_results['youtube'] = False
                     errors_log.append(f"YT Upload: {up.status_code}")
 
-    # ----------- PLATFORM 2: FACEBOOK REELS -----------
+    # ----------- 2. FACEBOOK REELS -----------
     if 'facebook' in p_val or 'fb' in p_val:
         target_key = 'billionaire' if 'billionaire' in row_dump_str.lower() else 'ai_sales'
         page_id = FB_PAGE_IDS.get(target_key, '')
-        fb_ok, fb_msg = post_facebook_reel(page_id, raw_download_url, caption_text)
+        fb_ok, fb_msg = post_facebook_reel(page_id, video_binary_data, caption_text)
         execution_results['facebook'] = fb_ok
         if not fb_ok: errors_log.append(fb_msg)
 
-    # ----------- PLATFORM 3: INSTAGRAM REELS -----------
+    # ----------- 3. INSTAGRAM REELS -----------
     if 'instagram' in p_val or 'ig' in p_val:
         target_key = 'billionaire' if 'billionaire' in row_dump_str.lower() else 'ai_sales'
         page_id = FB_PAGE_IDS.get(target_key, '')
