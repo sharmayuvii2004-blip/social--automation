@@ -79,7 +79,7 @@ def get_yt_access_token(row_dump_str):
         print("DEBUG: Sending request to Google OAuth Server...")
         r = requests.post('https://oauth2.googleapis.com/token', data={
             'client_id': client_id,
-            'clean_secret': client_secret, # Note: Fixed potential typo here to client_secret
+            'clean_secret': client_secret,
             'client_secret': client_secret,
             'refresh_token': refresh_token,
             'grant_type': 'refresh_token'
@@ -104,11 +104,17 @@ def post_facebook_reel(page_id, video_binary, caption):
     if not page_id or not FB_USER_TOKEN:
         return False, f"FB Credentials Missing (PageID: {page_id}, TokenExist: {bool(FB_USER_TOKEN)})"
     try:
+        # Step 1: Exchange System User Token to Page Access Token
+        page_token_url = f"https://graph.facebook.com/v20.0/{page_id}?fields=access_token&access_token={FB_USER_TOKEN}"
+        p_res = requests.get(page_token_url).json()
+        page_access_token = p_res.get('access_token', FB_USER_TOKEN)
+
         print(f"DEBUG: Hit Meta API for Facebook Page ID: {page_id}")
-        init_url = f"https://graph.facebook.com/v25.0/{page_id}/video_reels"
+        init_url = f"https://graph.facebook.com/v20.0/{page_id}/videos"
+        
         r = requests.post(init_url, data={
-            'upload_phase': 'START',
-            'access_token': FB_USER_TOKEN
+            'upload_phase': 'start',
+            'access_token': page_access_token
         })
         init_res = r.json()
         print(f"DEBUG: FB Init HTTP Status: {r.status_code}")
@@ -121,18 +127,19 @@ def post_facebook_reel(page_id, video_binary, caption):
         upload_url = init_res['upload_url']
         
         print("DEBUG: Uploading binary to Meta CDN...")
-        up_r = requests.post(upload_url, headers={'Authorization': f'OAuth {FB_USER_TOKEN}'}, data=video_binary)
+        up_r = requests.post(upload_url, headers={'Authorization': f'OAuth {page_access_token}'}, data=video_binary)
         print(f"DEBUG: FB Video Upload CDN Status: {up_r.status_code}")
         
-        time.sleep(25)
+        time.sleep(20)
         
         print("DEBUG: Dispatching FINISH Command...")
         p_r = requests.post(init_url, data={
-            'upload_phase': 'FINISH',
+            'upload_phase': 'finish',
             'video_id': video_id,
             'video_state': 'PUBLISHED',
             'description': caption,
-            'access_token': FB_USER_TOKEN
+            'title': caption[:50],
+            'access_token': page_access_token
         })
         publish_res = p_r.json()
         print(f"DEBUG: FB Finish HTTP Status: {p_r.status_code}")
