@@ -56,7 +56,6 @@ def get_pending(sheet):
     return pending
 
 def get_yt_access_token(row_dump_str):
-    # CRITICAL DEBUG FOR YOUTUBE
     refresh_token = None
     if 'ai_sales' in row_dump_str.lower():
         refresh_token = YT_TOKENS.get('ai_sales')
@@ -79,7 +78,6 @@ def get_yt_access_token(row_dump_str):
         print("DEBUG: Sending request to Google OAuth Server...")
         r = requests.post('https://oauth2.googleapis.com/token', data={
             'client_id': client_id,
-            'clean_secret': client_secret,
             'client_secret': client_secret,
             'refresh_token': refresh_token,
             'grant_type': 'refresh_token'
@@ -97,14 +95,14 @@ def get_yt_access_token(row_dump_str):
         return f"OAUTH_EXCEPTION: {str(e)}"
 
 # ========================================================
-# 🎥 DIRECT META ENGINES (WITH MAXIMUM LOGGING)
+# 🎥 DIRECT META ENGINES
 # ========================================================
 
 def post_facebook_reel(page_id, video_binary, caption):
     if not page_id or not FB_USER_TOKEN:
         return False, f"FB Credentials Missing (PageID: {page_id}, TokenExist: {bool(FB_USER_TOKEN)})"
     try:
-        # Step 1: Exchange System User Token to Page Access Token
+        # Step 1: Exchange System User Token for Page Access Token
         page_token_url = f"https://graph.facebook.com/v20.0/{page_id}?fields=access_token&access_token={FB_USER_TOKEN}"
         p_res = requests.get(page_token_url).json()
         page_access_token = p_res.get('access_token', FB_USER_TOKEN)
@@ -112,40 +110,55 @@ def post_facebook_reel(page_id, video_binary, caption):
         print(f"DEBUG: Hit Meta API for Facebook Page ID: {page_id}")
         init_url = f"https://graph.facebook.com/v20.0/{page_id}/videos"
         
+        file_size = len(video_binary)
+        
+        # Step 2: Start Resumable Upload Session
         r = requests.post(init_url, data={
             'upload_phase': 'start',
+            'file_size': file_size,
             'access_token': page_access_token
         })
         init_res = r.json()
-        print(f"DEBUG: FB Init HTTP Status: {r.status_code}")
         print(f"DEBUG: FB Init Raw JSON: {json.dumps(init_res)}")
         
-        if 'video_id' not in init_res:
+        if 'video_id' not in init_res or 'upload_session_id' not in init_res:
             return False, f"FB_INIT_RAW_ERR: {json.dumps(init_res)}"
             
         video_id = init_res['video_id']
-        upload_url = init_res['upload_url']
+        upload_session_id = init_res['upload_session_id']
+        start_offset = init_res.get('start_offset', '0')
         
-        print("DEBUG: Uploading binary to Meta CDN...")
-        up_r = requests.post(upload_url, headers={'Authorization': f'OAuth {page_access_token}'}, data=video_binary)
-        print(f"DEBUG: FB Video Upload CDN Status: {up_r.status_code}")
+        # Step 3: Direct Binary Upload Chunk
+        print("DEBUG: Transferring Video Binary to Meta Graph API...")
+        up_r = requests.post(
+            init_url,
+            data={
+                'upload_phase': 'transfer',
+                'upload_session_id': upload_session_id,
+                'start_offset': start_offset,
+                'access_token': page_access_token
+            },
+            files={'video_file_chunk': ('video.mp4', video_binary, 'video/mp4')}
+        )
+        up_res = up_r.json()
+        print(f"DEBUG: FB Transfer Raw JSON: {json.dumps(up_res)}")
         
-        time.sleep(20)
+        time.sleep(15)
         
+        # Step 4: Finalize and Publish Reel
         print("DEBUG: Dispatching FINISH Command...")
         p_r = requests.post(init_url, data={
             'upload_phase': 'finish',
-            'video_id': video_id,
+            'upload_session_id': upload_session_id,
             'video_state': 'PUBLISHED',
             'description': caption,
             'title': caption[:50],
             'access_token': page_access_token
         })
         publish_res = p_r.json()
-        print(f"DEBUG: FB Finish HTTP Status: {p_r.status_code}")
         print(f"DEBUG: FB Finish Raw JSON: {json.dumps(publish_res)}")
         
-        if publish_res.get('success') or 'id' in publish_res:
+        if publish_res.get('success') or 'id' in publish_res or 'video_id' in publish_res:
             return True, "fb_success"
         return False, f"FB_FINALIZE_RAW_ERR: {json.dumps(publish_res)}"
     except Exception as e:
